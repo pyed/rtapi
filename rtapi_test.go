@@ -9,10 +9,32 @@ import (
 	"testing"
 )
 
+const testAddress = ":5262"
+
+func TestMain(m *testing.M) {
+	listener, err := net.Listen("tcp", testAddress)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			go handleRequest(conn)
+		}
+	}()
+	os.Exit(m.Run())
+}
+
 var rt *rtorrent
 
 func TestRtorrent(t *testing.T) {
-	rt = Rtorrent("localhost:5262")
+	rt = Rtorrent(testAddress)
 }
 
 func TestTorrents(t *testing.T) {
@@ -151,27 +173,6 @@ func TestToRatio(t *testing.T) {
 	}
 }
 
-func TestMain(m *testing.M) {
-	listener, err := net.Listen("tcp", "localhost:5262")
-	if err != nil {
-		log.Print("Maybe 5262 port in use ?")
-		log.Fatal(err)
-	}
-
-	defer listener.Close()
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			go handleRequest(conn)
-		}
-	}()
-	os.Exit(m.Run())
-}
-
 func handleRequest(conn net.Conn) {
 	defer conn.Close()
 
@@ -201,6 +202,13 @@ func handleRequest(conn net.Conn) {
 	default:
 		log.Print("Unkown request:")
 		log.Fatal(req)
+	}
+}
+
+func BenchmarkTorrents(b *testing.B) {
+	rt := Rtorrent(testAddress)
+	for i := 0; i < b.N; i++ {
+		rt.Torrents()
 	}
 }
 
