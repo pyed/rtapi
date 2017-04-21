@@ -55,8 +55,9 @@ func TestTorrents(t *testing.T) {
 			Size:      110636640,
 			SizeDone:  110636640,
 			Percent:   "100%",
+			ETA:       -1,
 			Ratio:     0,
-			State:     Started,
+			State:     Seeding,
 			Message:   "",
 			Tracker:   "https://please.track.me/announce",
 			Path:      "/home/pyed/rtorrent/download/Ubuntu.iso",
@@ -72,6 +73,7 @@ func TestTorrents(t *testing.T) {
 			Size:      4286318720,
 			SizeDone:  3281318720,
 			Percent:   "76.6%",
+			ETA:       -1,
 			Ratio:     3.05,
 			State:     Error,
 			Message:   `Tracker: [Failure reason "torrent is too hard to install. -- Linus"]`,
@@ -117,25 +119,32 @@ func TestVersion(t *testing.T) {
 
 }
 
-func TestCalcPercent(t *testing.T) {
+func TestCalcPercentAndETA(t *testing.T) {
 	testCases := []struct {
-		size, done      int
-		expectedPercent string
+		size, done, downRate int
+		expectedPercent      string
+		expectedETA          int
 	}{
-		{100, 100, "100%"},
-		{100, 50, "50.0%"},
-		{100, 0, "0.0%"},
+		{100, 100, 0, "100%", -1},
+		{100, 50, 23, "50.0%", 2},
+		{100, 0, 1, "0.0%", 100},
 
-		{2345, 23, "1.0%"},
-		{23463453, 1, "0.0%"},
-		{5234, 2234, "42.7%"},
+		{2345, 23, 200, "1.0%", 11},
+		{23463453, 1, 60000, "0.0%", 391},
+		{5234, 2234, 999, "42.7%", 3},
+		{1, 0, 0, "0.0%", -1},
+		{0, 0, 0, "100%", -1},
 	}
 
 	for i, test := range testCases {
-		percent := calcPercent(test.size, test.done)
+		percent, ETA := calcPercentAndETA(test.size, test.done, test.downRate)
 		if percent != test.expectedPercent {
 			t.Errorf("Case %d: Expected %s to be the percent of (%d, %d): got %s",
 				i, test.expectedPercent, test.size, test.done, percent)
+		}
+		if ETA != test.expectedETA {
+			t.Errorf("Case %d: Expected %d to be the ETA, got: %d",
+				i, test.expectedETA, ETA)
 		}
 	}
 }
