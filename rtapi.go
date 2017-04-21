@@ -11,13 +11,13 @@ import (
 	"strconv"
 )
 
-type state int8
-
 const (
-	Started state = iota
-	Paused
-	Checking
-	Error
+	// Started  = "Started"
+	Downloading = "Downloading"
+	Seeding     = "Seeding"
+	Paused      = "Paused"
+	Checking    = "Checking"
+	Error       = "Error"
 )
 
 // Torrent represents a single torrent.
@@ -32,8 +32,9 @@ type Torrent struct {
 	Size      int
 	SizeDone  int
 	Percent   string
+	ETA       int
 	Ratio     float64
-	State     state
+	State     string
 	Message   string
 	Tracker   string
 	Path      string
@@ -111,7 +112,7 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 			txt = scanner.Text()
 			torrent.SizeDone = pInt(txt[11 : len(txt)-13])
 
-			torrent.Percent = calcPercent(torrent.Size, torrent.SizeDone)
+			torrent.Percent, torrent.ETA = calcPercentAndETA(torrent.Size, torrent.SizeDone, torrent.DownRate)
 
 			scanner.Scan()
 			txt = scanner.Text()
@@ -149,8 +150,11 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 				torrent.State = Checking
 			case (dState == "0" || dIsActive == "0") && dIsOpen != "0":
 				torrent.State = Paused
-			default:
-				torrent.State = Started
+			default: // Started
+				torrent.State = Downloading
+				if torrent.Size == torrent.SizeDone {
+					torrent.State = Seeding
+				}
 			}
 
 			torrents = append(torrents, torrent)
@@ -363,12 +367,18 @@ func (r *rtorrent) getTrackers(ts Torrents) error {
 	return nil
 }
 
-// calcPercent takes the size and the size done to calculate the percenage.
-func calcPercent(size, done int) string {
+// calcPercentAndETA takes size, size done, down rate to calculate the percenage + ETA.
+func calcPercentAndETA(size, done, downrate int) (string, int) {
+	ETA := -1
 	if size == done {
-		return "100%" // Dodge "100.0%"
+		return "100%", ETA // Dodge "100.0%"
 	}
-	return fmt.Sprintf("%.1f%%", float64(done)/float64(size)*100)
+	percentage := fmt.Sprintf("%.1f%%", float64(done)/float64(size)*100)
+
+	if downrate > 0 {
+		ETA = (size - done) / downrate
+	}
+	return percentage, ETA
 }
 
 // send takes scgi formated data and returns net.Conn
