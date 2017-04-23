@@ -195,11 +195,11 @@ func handleRequest(conn net.Conn) {
 		if _, err := conn.Write([]byte(torrentsResp)); err != nil {
 			log.Fatal(err)
 		}
-	case strings.Contains(req, "t.get_url"): // getTrackers()
+	case strings.Contains(req, "t.url"): // getTrackers()
 		if _, err := conn.Write([]byte(trackersResp)); err != nil {
 			log.Fatal(err)
 		}
-	case strings.Contains(req, "get_down_rate"): // Speeds()
+	case strings.Contains(req, "down_rate"): // Speeds()
 		if _, err := conn.Write([]byte(speedsResp)); err != nil {
 			log.Fatal(err)
 		}

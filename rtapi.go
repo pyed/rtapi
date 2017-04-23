@@ -13,11 +13,12 @@ import (
 
 const (
 	// Started  = "Started"
-	Downloading = "Downloading"
-	Seeding     = "Seeding"
-	Paused      = "Paused"
-	Checking    = "Checking"
-	Error       = "Error"
+	Leeching = "Leeching"
+	Seeding  = "Seeding"
+	Complete = "Complete"
+	Paused   = "Paused"
+	Hashing  = "Hashing"
+	Error    = "Error"
 )
 
 // Torrent represents a single torrent.
@@ -142,16 +143,34 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 			txt = scanner.Text()
 			dIsHashChecking := txt[11 : len(txt)-13]
 
+			scanner.Scan()
+			txt = scanner.Text()
+			dGetHashing := txt[11 : len(txt)-13]
+			fmt.Println("HERE", dIsHashChecking)
+
+			scanner.Scan()
+			txt = scanner.Text()
+			dSizeOfChunks := txt[11 : len(txt)-13]
+
+			scanner.Scan()
+			txt = scanner.Text()
+			dChunkSize := txt[11 : len(txt)-13]
+
+			scanner.Scan()
+			txt = scanner.Text()
+			dCompletedChunks := txt[11 : len(txt)-13]
+			fmt.Println(dGetHashing, dSizeOfChunks, dChunkSize, dCompletedChunks)
+
 			// figure out the State
 			switch {
 			case len(torrent.Message) != 0 && torrent.Message != "Tracker: [Tried all trackers.]":
 				torrent.State = Error
 			case dIsHashChecking != "0":
-				torrent.State = Checking
+				torrent.State = Hashing
 			case (dState == "0" || dIsActive == "0") && dIsOpen != "0":
 				torrent.State = Paused
 			default: // Started
-				torrent.State = Downloading
+				torrent.State = Leeching
 				if torrent.Size == torrent.SizeDone {
 					torrent.State = Seeding
 				}
@@ -334,7 +353,7 @@ func (r *rtorrent) Version() string {
 
 // getTrackers takes Torrents and fill their tracker fields.
 func (r *rtorrent) getTrackers(ts Torrents) error {
-	header, body := xmlCon("t.get_url")
+	header, body := xmlCon("t.url")
 
 	xml := new(bytes.Buffer)
 	xml.WriteString(header)
@@ -444,62 +463,71 @@ func xmlCon(method string) (h string, b string) {
 const (
 	torrentsXML = `<?xml version='1.0'?>
 <methodCall>
-<methodName>d.multicall</methodName>
+<methodName>d.multicall2</methodName>
 <params>
+<param>
+<value><string></string></value>
+</param>
 <param>
 <value><string>main</string></value>
 </param>
 <param>
-<value><string>d.get_name=</string></value>
+<value><string>d.base_filename=</string></value>
 </param>
 <param>
-<value><string>d.get_hash=</string></value>
+<value><string>d.hash=</string></value>
 </param>
 <param>
-<value><string>d.get_down_rate=</string></value>
+<value><string>d.down.rate=</string></value>
 </param>
 <param>
-<value><string>d.get_up_rate=</string></value>
+<value><string>d.up.rate=</string></value>
 </param>
 <param>
-<value><string>d.get_down_total=</string></value>
+<value><string>d.down.total=</string></value>
 </param>
 <param>
-<value><string>d.get_up_total=</string></value>
+<value><string>d.up.total=</string></value>
 </param>
 <param>
-<value><string>d.get_size_bytes=</string></value>
+<value><string>d.size_bytes=</string></value>
 </param>
 <param>
-<value><string>d.get_bytes_done=</string></value>
+<value><string>d.bytes_done=</string></value>
 </param>
 <param>
-<value><string>d.get_ratio=</string></value>
+<value><string>d.ratio=</string></value>
 </param>
 <param>
-<value><string>d.get_message=</string></value>
+<value><string>d.message=</string></value>
 </param>
 <param>
-<value><string>d.get_base_path=</string></value>
-</param>
-<param>
-<value><string>d.get_state=</string></value>
+<value><string>d.base_path=</string></value>
 </param>
 <param>
 <value><string>d.is_active=</string></value>
 </param>
 <param>
-<value><string>d.is_open=</string></value>
+<value><string>d.complete=</string></value>
 </param>
 <param>
-<value><string>d.is_hash_checking=</string></value>
+<value><string>d.hashing=</string></value>
+</param>
+<param>
+<value><string>d.size_chunks=</string></value>
+</param>
+<param>
+<value><string>d.chunk_size=</string></value>
+</param>
+<param>
+<value><string>d.completed_chunks=</string></value>
 </param>
 </params>
 </methodCall>`
 
 	downloadXML = `<?xml version='1.0'?>
 <methodCall>
-<methodName>load_start</methodName>
+<methodName>load.start</methodName>
 <params>
 <param>
 <value><string>%s</string></value>
@@ -589,7 +617,7 @@ const (
 <member>
 <name>methodName</name>
 <value>
-<string>get_down_rate</string>
+<string>throttle.global_down.rate</string>
 </value>
 </member>
 <member>
@@ -611,7 +639,7 @@ const (
 <member>
 <name>methodName</name>
 <value>
-<string>get_up_rate</string>
+<string>throttle.global_up.rate</string>
 </value>
 </member>
 <member>
