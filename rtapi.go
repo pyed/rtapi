@@ -16,25 +16,24 @@ const (
 	Leeching = "Leeching"
 	Seeding  = "Seeding"
 	Complete = "Complete"
-	Paused   = "Paused"
+	Stopped  = "Stopped"
 	Hashing  = "Hashing"
 	Error    = "Error"
 )
 
 // Torrent represents a single torrent.
 type Torrent struct {
-	ID        int
+	ID        uint64
 	Name      string
 	Hash      string
-	DownRate  int
-	UpRate    int
-	DownTotal int
-	UpTotal   int
-	Size      int
-	SizeDone  int
+	DownRate  uint64
+	UpRate    uint64
+	Size      uint64
+	Completed uint64
 	Percent   string
-	ETA       int
+	ETA       uint64
 	Ratio     float64
+	UpTotal   uint64
 	State     string
 	Message   string
 	Tracker   string
@@ -73,7 +72,7 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 
 	// Fuck XML. http://foaas.com/XML/Everyone
 	scanner := bufio.NewScanner(conn)
-	var id int
+	var id uint64
 	for scanner.Scan() {
 		if scanner.Text() == "<value><array><data>" {
 			torrent := new(Torrent)
@@ -91,33 +90,35 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.DownRate = pInt(txt[11 : len(txt)-13])
+			torrent.DownRate = pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.UpRate = pInt(txt[11 : len(txt)-13])
+			torrent.UpRate = pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.DownTotal = pInt(txt[11 : len(txt)-13])
+			dSizeChunks := pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.UpTotal = pInt(txt[11 : len(txt)-13])
+			dChunkSize := pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.Size = pInt(txt[11 : len(txt)-13])
+			dCompletedChunks := pUint(txt[11 : len(txt)-13])
+
+			torrent.Size = dSizeChunks * dChunkSize
+			torrent.Completed = dCompletedChunks * dChunkSize
+
+			torrent.Percent, torrent.ETA = calcPercentAndETA(torrent.Size, torrent.Completed, torrent.DownRate)
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.SizeDone = pInt(txt[11 : len(txt)-13])
+			ratio := pUint(txt[11 : len(txt)-13])
+			torrent.Ratio = round(float64(ratio)/1000, 2)
 
-			torrent.Percent, torrent.ETA = calcPercentAndETA(torrent.Size, torrent.SizeDone, torrent.DownRate)
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Ratio = toRatio(txt[11 : len(txt)-13])
+			torrent.UpTotal = torrent.Completed * (ratio / 1000)
 
 			scanner.Scan()
 			txt = scanner.Text()
@@ -129,51 +130,34 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 
 			scanner.Scan()
 			txt = scanner.Text()
-			dState := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
 			dIsActive := txt[11 : len(txt)-13]
 
 			scanner.Scan()
 			txt = scanner.Text()
-			dIsOpen := txt[11 : len(txt)-13]
+			dConnectionCurrent := txt[15 : len(txt)-17]
 
 			scanner.Scan()
 			txt = scanner.Text()
-			dIsHashChecking := txt[11 : len(txt)-13]
+			dComplete := txt[11 : len(txt)-13]
 
 			scanner.Scan()
 			txt = scanner.Text()
-			dGetHashing := txt[11 : len(txt)-13]
-			fmt.Println("HERE", dIsHashChecking)
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dSizeOfChunks := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dChunkSize := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dCompletedChunks := txt[11 : len(txt)-13]
-			fmt.Println(dGetHashing, dSizeOfChunks, dChunkSize, dCompletedChunks)
+			dHashing := txt[11 : len(txt)-13]
 
 			// figure out the State
 			switch {
-			case len(torrent.Message) != 0 && torrent.Message != "Tracker: [Tried all trackers.]":
+			case dIsActive == "1" && len(torrent.Message) != 0:
 				torrent.State = Error
-			case dIsHashChecking != "0":
+			case dHashing != "0":
 				torrent.State = Hashing
-			case (dState == "0" || dIsActive == "0") && dIsOpen != "0":
-				torrent.State = Paused
-			default: // Started
+			case dIsActive == "1" && dComplete == "1":
+				torrent.State = Seeding
+			case dIsActive == "1" && dConnectionCurrent == "leech":
 				torrent.State = Leeching
-				if torrent.Size == torrent.SizeDone {
-					torrent.State = Seeding
-				}
+			case dComplete == "1":
+				torrent.State = Complete
+			default: // dIsActive == "0"
+				torrent.State = Stopped
 			}
 
 			torrents = append(torrents, torrent)
@@ -293,11 +277,11 @@ func (r *rtorrent) Delete(ts ...*Torrent) error {
 }
 
 // Speeds returns current Down/Up rates.
-func (r *rtorrent) Speeds() (down, up int) {
+func (r *rtorrent) Speeds() (down, up uint64) {
 	data := encode(speedsXML)
 	conn, err := r.send(data)
 	if err != nil {
-		down, up = -1, -1
+		down, up = 0, 0
 		return
 	}
 	defer conn.Close()
@@ -307,14 +291,14 @@ func (r *rtorrent) Speeds() (down, up int) {
 		if scanner.Text() == "<value><array><data>" {
 			scanner.Scan()
 			txt := scanner.Text()
-			down = pInt(txt[11 : len(txt)-13])
+			down = pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan() // </data></array></value>
 			scanner.Scan() // <value><array><data>
 
 			scanner.Scan()
 			txt = scanner.Text()
-			up = pInt(txt[11 : len(txt)-13])
+			up = pUint(txt[11 : len(txt)-13])
 			return
 		}
 	}
@@ -359,7 +343,7 @@ func (r *rtorrent) getTrackers(ts Torrents) error {
 	xml.WriteString(header)
 
 	for i := 0; i < len(ts); i++ {
-		xml.WriteString(ts[i].Hash)
+		xml.WriteString(ts[i].Hash + ":t0")
 		if i != len(ts)-1 {
 			xml.WriteString(body)
 		}
@@ -387,8 +371,8 @@ func (r *rtorrent) getTrackers(ts Torrents) error {
 }
 
 // calcPercentAndETA takes size, size done, down rate to calculate the percenage + ETA.
-func calcPercentAndETA(size, done, downrate int) (string, int) {
-	ETA := -1
+func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
+	var ETA uint64
 	if size == done {
 		return "100%", ETA // Dodge "100.0%"
 	}
@@ -424,16 +408,16 @@ func encode(data string) []byte {
 
 }
 
-// pInt wraps strconv.Atoi
-func pInt(str string) int {
-	i, err := strconv.Atoi(str)
+// pUint wraps strconv.ParseUint
+func pUint(str string) uint64 {
+	u, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
-		return -1
+		return 0
 	}
-	return i
+	return u
 }
 
-// round function, used by toRatio.
+// round function.
 func round(v float64, decimals int) float64 {
 	var pow float64 = 1
 	for i := 0; i < decimals; i++ {
@@ -443,14 +427,14 @@ func round(v float64, decimals int) float64 {
 }
 
 // toRatio takes care of setting the ratio value.
-func toRatio(ratio string) float64 {
-	f, err := strconv.ParseFloat(ratio, 64)
-	if err != nil {
-		return -1.0
-	}
+// func toRatio(ratio int) float64 {
+// 	f, err := strconv.ParseFloat(ratio, 64)
+// 	if err != nil {
+// 		return -1.0
+// 	}
 
-	return round(f/1000, 2)
-}
+// 	return round(f/1000, 2)
+// }
 
 // xmlCon takes a method name and constructs a header, body, for that method with 'system.multicall'
 func xmlCon(method string) (h string, b string) {
@@ -472,7 +456,7 @@ const (
 <value><string>main</string></value>
 </param>
 <param>
-<value><string>d.base_filename=</string></value>
+<value><string>d.name=</string></value>
 </param>
 <param>
 <value><string>d.hash=</string></value>
@@ -484,16 +468,13 @@ const (
 <value><string>d.up.rate=</string></value>
 </param>
 <param>
-<value><string>d.down.total=</string></value>
+<value><string>d.size_chunks=</string></value>
 </param>
 <param>
-<value><string>d.up.total=</string></value>
+<value><string>d.chunk_size=</string></value>
 </param>
 <param>
-<value><string>d.size_bytes=</string></value>
-</param>
-<param>
-<value><string>d.bytes_done=</string></value>
+<value><string>d.completed_chunks=</string></value>
 </param>
 <param>
 <value><string>d.ratio=</string></value>
@@ -508,19 +489,13 @@ const (
 <value><string>d.is_active=</string></value>
 </param>
 <param>
+<value><string>d.connection_current=</string></value>
+</param>
+<param>
 <value><string>d.complete=</string></value>
 </param>
 <param>
 <value><string>d.hashing=</string></value>
-</param>
-<param>
-<value><string>d.size_chunks=</string></value>
-</param>
-<param>
-<value><string>d.chunk_size=</string></value>
-</param>
-<param>
-<value><string>d.completed_chunks=</string></value>
 </param>
 </params>
 </methodCall>`
@@ -561,9 +536,6 @@ const (
 
 	body = `</string>
 </value>
-<value>
-<i4>0</i4>
-</value>
 </data>
 </array>
 </value>
@@ -587,9 +559,6 @@ const (
 <string>`
 
 	footer = `</string>
-</value>
-<value>
-<i4>0</i4>
 </value>
 </data>
 </array>
