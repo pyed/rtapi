@@ -2,10 +2,11 @@ package rtapi
 
 import (
 	"bytes"
+	"io"
 	"log"
 	"net"
 	"os"
-	"strings"
+	"strconv"
 	"testing"
 )
 
@@ -178,26 +179,26 @@ func TestEncode(t *testing.T) {
 
 func handleRequest(conn net.Conn) {
 	defer conn.Close()
-
-	buf := make([]byte, 256)
+	length := getContentLen(conn)
+	buf := make([]byte, length)
 	conn.Read(buf)
 
 	req := string(buf)
 
 	switch {
-	case strings.Contains(req, "main"): // Torrents()
+	case req == torrentsReq:
 		if _, err := conn.Write([]byte(torrentsResp)); err != nil {
 			log.Fatal(err)
 		}
-	case strings.Contains(req, "t.url"): // getTrackers()
+	case req == trackersReq:
 		if _, err := conn.Write([]byte(trackersResp)); err != nil {
 			log.Fatal(err)
 		}
-	case strings.Contains(req, "throttle.global"): // Speeds()
+	case req == speedsReq:
 		if _, err := conn.Write([]byte(speedsResp)); err != nil {
 			log.Fatal(err)
 		}
-	case strings.Contains(req, "system.client_version"): // Version()
+	case req == versionReq:
 		if _, err := conn.Write([]byte(versionResp)); err != nil {
 			log.Fatal(err)
 		}
@@ -208,6 +209,25 @@ func handleRequest(conn net.Conn) {
 	}
 }
 
+func getContentLen(reader io.Reader) int {
+	buf := new(bytes.Buffer)
+	for {
+		s := make([]byte, 1)
+		if _, err := reader.Read(s); err != nil {
+			log.Fatal(err)
+		}
+		if string(s) == "," {
+			break
+		}
+		buf.WriteByte(s[0])
+	}
+	i, err := strconv.Atoi(buf.String()[18 : buf.Len()-8])
+	if err != nil {
+		log.Fatal(err)
+	}
+	return i
+}
+
 func BenchmarkTorrents(b *testing.B) {
 	rt := Rtorrent(testAddress)
 	for i := 0; i < b.N; i++ {
@@ -216,6 +236,61 @@ func BenchmarkTorrents(b *testing.B) {
 }
 
 const (
+	torrentsReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>d.multicall2</methodName>
+<params>
+<param>
+<value><string></string></value>
+</param>
+<param>
+<value><string>main</string></value>
+</param>
+<param>
+<value><string>d.name=</string></value>
+</param>
+<param>
+<value><string>d.hash=</string></value>
+</param>
+<param>
+<value><string>d.down.rate=</string></value>
+</param>
+<param>
+<value><string>d.up.rate=</string></value>
+</param>
+<param>
+<value><string>d.size_chunks=</string></value>
+</param>
+<param>
+<value><string>d.chunk_size=</string></value>
+</param>
+<param>
+<value><string>d.completed_chunks=</string></value>
+</param>
+<param>
+<value><string>d.ratio=</string></value>
+</param>
+<param>
+<value><string>d.message=</string></value>
+</param>
+<param>
+<value><string>d.base_path=</string></value>
+</param>
+<param>
+<value><string>d.is_active=</string></value>
+</param>
+<param>
+<value><string>d.connection_current=</string></value>
+</param>
+<param>
+<value><string>d.complete=</string></value>
+</param>
+<param>
+<value><string>d.hashing=</string></value>
+</param>
+</params>
+</methodCall>`
+
 	torrentsResp = `Status: 200 OK
 Content-Type: text/xml
 Content-Length: 2092
@@ -276,6 +351,87 @@ Content-Length: 2092
 </params>
 </methodResponse>`
 
+	trackersReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>t.url</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA:t0</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>t.url</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648:t0</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>t.url</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>02CA77A6A047FD37F04337437D18F82E61861084:t0</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
 	trackersResp = `Status: 200 OK
 Content-Type: text/xml
 Content-Length: 513
@@ -297,6 +453,65 @@ Content-Length: 513
 </params>
 </methodResponse>`
 
+	speedsReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.global_down.rate</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.global_up.rate</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
 	speedsResp = `Status: 200 OK
 Content-Type: text/xml
 Content-Length: 315
@@ -314,6 +529,65 @@ Content-Length: 315
 </data></array></value></param>
 </params>
 </methodResponse>`
+
+	versionReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>system.client_version</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>system.library_version</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
 
 	versionResp = `Status: 200 OK
 Content-Type: text/xml
