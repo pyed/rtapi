@@ -46,39 +46,54 @@ func TestTorrents(t *testing.T) {
 	testCases := Torrents{
 		&Torrent{
 			ID:        1,
-			Name:      "Ubuntu.iso",
-			Hash:      "1C0F867862B481278C0D57A8779D3708D3032AEB",
-			DownRate:  234,
-			UpRate:    1001,
-			DownTotal: 0,
-			UpTotal:   0,
-			Size:      110636640,
-			SizeDone:  110636640,
-			Percent:   "100%",
-			ETA:       -1,
+			Name:      "debian-mac-8.7.1-amd64-netinst.iso",
+			Hash:      "1C60CBECF4C632EDC7AB546623454B33A295CCEA",
+			DownRate:  0,
+			UpRate:    0,
+			Size:      996 * 262144,
+			Completed: 792 * 262144,
+			Percent:   "79.5%",
+			ETA:       0,
 			Ratio:     0,
-			State:     Seeding,
-			Message:   "",
-			Tracker:   "https://please.track.me/announce",
-			Path:      "/home/pyed/rtorrent/download/Ubuntu.iso",
+			UpTotal:   0,
+			State:     Error,
+			Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
+			Tracker:   "http://torrent.debian.com:6969/announce",
+			Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
 		},
 		&Torrent{
 			ID:        2,
-			Name:      "Debian.iso",
-			Hash:      "98D4E447467D6DC965023F719258EA740C2DEF45",
+			Name:      "ubuntu-17.04-server-amd64.iso",
+			Hash:      "8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648",
 			DownRate:  0,
 			UpRate:    0,
-			DownTotal: 0,
-			UpTotal:   13068963447,
-			Size:      4286318720,
-			SizeDone:  3281318720,
-			Percent:   "76.6%",
-			ETA:       -1,
-			Ratio:     3.05,
-			State:     Error,
-			Message:   `Tracker: [Failure reason "torrent is too hard to install. -- Linus"]`,
-			Tracker:   "https://tracker.thetracking.org/announce.php",
-			Path:      "/home/pyed/rtorrent/download/Debian.iso",
+			Size:      1370 * 524288,
+			Completed: 1370 * 524288,
+			Percent:   "100%",
+			ETA:       0,
+			Ratio:     0,
+			UpTotal:   0,
+			State:     Seeding,
+			Message:   "",
+			Tracker:   "http://torrent.ubuntu.com:6969/announce",
+			Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
+		},
+		&Torrent{
+			ID:        3,
+			Name:      "archlinux-2017.04.01-x86_64.iso",
+			Hash:      "02CA77A6A047FD37F04337437D18F82E61861084",
+			DownRate:  997035,
+			UpRate:    0,
+			Size:      956 * 524288,
+			Completed: 115 * 524288,
+			Percent:   "12.0%",
+			ETA:       442,
+			Ratio:     0,
+			UpTotal:   0,
+			State:     Leeching,
+			Message:   "",
+			Tracker:   "udp://tracker.archlinux.org:6969",
+			Path:      "/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso",
 		},
 	}
 
@@ -94,8 +109,8 @@ func TestTorrents(t *testing.T) {
 }
 
 func TestSpeeds(t *testing.T) {
-	expectedDown := 72
-	expectedUp := 9321
+	var expectedDown uint64 = 336650
+	var expectedUp uint64 = 593
 
 	down, up := rt.Speeds()
 
@@ -116,24 +131,23 @@ func TestVersion(t *testing.T) {
 	if version != expectedVersion {
 		t.Errorf("Expected the version to be %s, got: %s", expectedVersion, version)
 	}
-
 }
 
 func TestCalcPercentAndETA(t *testing.T) {
 	testCases := []struct {
-		size, done, downRate int
+		size, done, downRate uint64
 		expectedPercent      string
-		expectedETA          int
+		expectedETA          uint64
 	}{
-		{100, 100, 0, "100%", -1},
+		{100, 100, 0, "100%", 0},
 		{100, 50, 23, "50.0%", 2},
 		{100, 0, 1, "0.0%", 100},
 
 		{2345, 23, 200, "1.0%", 11},
 		{23463453, 1, 60000, "0.0%", 391},
 		{5234, 2234, 999, "42.7%", 3},
-		{1, 0, 0, "0.0%", -1},
-		{0, 0, 0, "100%", -1},
+		{1, 0, 0, "0.0%", 0},
+		{0, 0, 0, "100%", 0},
 	}
 
 	for i, test := range testCases {
@@ -162,26 +176,6 @@ func TestEncode(t *testing.T) {
 	}
 }
 
-func TestToRatio(t *testing.T) {
-	testCases := []struct {
-		input    string
-		expected float64
-	}{
-		{"0", 0},
-		{"3004", 3.00},
-		{"9292", 9.29},
-		{"11", 0.01},
-	}
-
-	for i, test := range testCases {
-		ratio := toRatio(test.input)
-		if ratio != test.expected {
-			t.Errorf("Case %d: Expected %.2f out of %s, got: %.2f",
-				i, test.expected, test.input, ratio)
-		}
-	}
-}
-
 func handleRequest(conn net.Conn) {
 	defer conn.Close()
 
@@ -199,7 +193,7 @@ func handleRequest(conn net.Conn) {
 		if _, err := conn.Write([]byte(trackersResp)); err != nil {
 			log.Fatal(err)
 		}
-	case strings.Contains(req, "down_rate"): // Speeds()
+	case strings.Contains(req, "throttle.global"): // Speeds()
 		if _, err := conn.Write([]byte(speedsResp)); err != nil {
 			log.Fatal(err)
 		}
@@ -224,44 +218,58 @@ func BenchmarkTorrents(b *testing.B) {
 const (
 	torrentsResp = `Status: 200 OK
 Content-Type: text/xml
-Content-Length: 1373
+Content-Length: 2092
 
 <?xml version="1.0" encoding="UTF-8"?>
 <methodResponse>
 <params>
 <param><value><array><data>
 <value><array><data>
-<value><string>Ubuntu.iso</string></value>
-<value><string>1C0F867862B481278C0D57A8779D3708D3032AEB</string></value>
-<value><i8>234</i8></value>
-<value><i8>1001</i8></value>
+<value><string>debian-mac-8.7.1-amd64-netinst.iso</string></value>
+<value><string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string></value>
 <value><i8>0</i8></value>
 <value><i8>0</i8></value>
-<value><i8>110636640</i8></value>
-<value><i8>110636640</i8></value>
+<value><i8>996</i8></value>
+<value><i8>262144</i8></value>
+<value><i8>792</i8></value>
+<value><i8>0</i8></value>
+<value><string>Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]</string></value>
+<value><string>/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso</string></value>
+<value><i8>1</i8></value>
+<value><string>leech</string></value>
+<value><i8>0</i8></value>
+<value><i8>0</i8></value>
+</data></array></value>
+<value><array><data>
+<value><string>ubuntu-17.04-server-amd64.iso</string></value>
+<value><string>8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648</string></value>
+<value><i8>0</i8></value>
+<value><i8>0</i8></value>
+<value><i8>1370</i8></value>
+<value><i8>524288</i8></value>
+<value><i8>1370</i8></value>
 <value><i8>0</i8></value>
 <value><string></string></value>
-<value><string>/home/pyed/rtorrent/download/Ubuntu.iso</string></value>
+<value><string>/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso</string></value>
 <value><i8>1</i8></value>
-<value><i8>1</i8></value>
+<value><string>seed</string></value>
 <value><i8>1</i8></value>
 <value><i8>0</i8></value>
 </data></array></value>
 <value><array><data>
-<value><string>Debian.iso</string></value>
-<value><string>98D4E447467D6DC965023F719258EA740C2DEF45</string></value>
+<value><string>archlinux-2017.04.01-x86_64.iso</string></value>
+<value><string>02CA77A6A047FD37F04337437D18F82E61861084</string></value>
+<value><i8>997035</i8></value>
 <value><i8>0</i8></value>
+<value><i8>956</i8></value>
+<value><i8>524288</i8></value>
+<value><i8>115</i8></value>
 <value><i8>0</i8></value>
+<value><string></string></value>
+<value><string>/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso</string></value>
+<value><i8>1</i8></value>
+<value><string>leech</string></value>
 <value><i8>0</i8></value>
-<value><i8>13068963447</i8></value>
-<value><i8>4286318720</i8></value>
-<value><i8>3281318720</i8></value>
-<value><i8>3048</i8></value>
-<value><string>Tracker: [Failure reason "torrent is too hard to install. -- Linus"]</string></value>
-<value><string>/home/pyed/rtorrent/download/Debian.iso</string></value>
-<value><i8>1</i8></value>
-<value><i8>1</i8></value>
-<value><i8>1</i8></value>
 <value><i8>0</i8></value>
 </data></array></value>
 </data></array></value></param>
@@ -270,17 +278,20 @@ Content-Length: 1373
 
 	trackersResp = `Status: 200 OK
 Content-Type: text/xml
-Content-Length: 419
+Content-Length: 513
 
 <?xml version="1.0" encoding="UTF-8"?>
 <methodResponse>
 <params>
 <param><value><array><data>
 <value><array><data>
-<value><string>https://please.track.me/announce</string></value>
+<value><string>http://torrent.debian.com:6969/announce</string></value>
 </data></array></value>
 <value><array><data>
-<value><string>https://tracker.thetracking.org/announce.php</string></value>
+<value><string>http://torrent.ubuntu.com:6969/announce</string></value>
+</data></array></value>
+<value><array><data>
+<value><string>udp://tracker.archlinux.org:6969</string></value>
 </data></array></value>
 </data></array></value></param>
 </params>
@@ -288,17 +299,17 @@ Content-Length: 419
 
 	speedsResp = `Status: 200 OK
 Content-Type: text/xml
-Content-Length: 312
+Content-Length: 315
 
 <?xml version="1.0" encoding="UTF-8"?>
 <methodResponse>
 <params>
 <param><value><array><data>
 <value><array><data>
-<value><i8>72</i8></value>
+<value><i8>336650</i8></value>
 </data></array></value>
 <value><array><data>
-<value><i8>9321</i8></value>
+<value><i8>593</i8></value>
 </data></array></value>
 </data></array></value></param>
 </params>
