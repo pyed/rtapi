@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	// Started  = "Started"
 	Leeching = "Leeching"
 	Seeding  = "Seeding"
 	Complete = "Complete"
@@ -425,16 +424,6 @@ func round(v float64, decimals int) float64 {
 	}
 	return float64(int((v*pow)+0.5)) / pow
 }
-
-// toRatio takes care of setting the ratio value.
-// func toRatio(ratio int) float64 {
-// 	f, err := strconv.ParseFloat(ratio, 64)
-// 	if err != nil {
-// 		return -1.0
-// 	}
-
-// 	return round(f/1000, 2)
-// }
 
 // xmlCon takes a method name and constructs a header, body, for that method with 'system.multicall'
 func xmlCon(method string) (h string, b string) {
