@@ -38,64 +38,64 @@ func TestRtorrent(t *testing.T) {
 	rt = Rtorrent(testAddress)
 }
 
+var testCases = Torrents{
+	&Torrent{
+		ID:        1,
+		Name:      "debian-mac-8.7.1-amd64-netinst.iso",
+		Hash:      "1C60CBECF4C632EDC7AB546623454B33A295CCEA",
+		DownRate:  0,
+		UpRate:    0,
+		Size:      996 * 262144,
+		Completed: 792 * 262144,
+		Percent:   "79.5%",
+		ETA:       0,
+		Ratio:     0,
+		UpTotal:   0,
+		State:     Error,
+		Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
+		Tracker:   "http://torrent.debian.com:6969/announce",
+		Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
+	},
+	&Torrent{
+		ID:        2,
+		Name:      "ubuntu-17.04-server-amd64.iso",
+		Hash:      "8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648",
+		DownRate:  0,
+		UpRate:    0,
+		Size:      1370 * 524288,
+		Completed: 1370 * 524288,
+		Percent:   "100%",
+		ETA:       0,
+		Ratio:     0,
+		UpTotal:   0,
+		State:     Seeding,
+		Message:   "",
+		Tracker:   "http://torrent.ubuntu.com:6969/announce",
+		Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
+	},
+	&Torrent{
+		ID:        3,
+		Name:      "archlinux-2017.04.01-x86_64.iso",
+		Hash:      "02CA77A6A047FD37F04337437D18F82E61861084",
+		DownRate:  997035,
+		UpRate:    0,
+		Size:      956 * 524288,
+		Completed: 115 * 524288,
+		Percent:   "12.0%",
+		ETA:       442,
+		Ratio:     0,
+		UpTotal:   0,
+		State:     Leeching,
+		Message:   "",
+		Tracker:   "udp://tracker.archlinux.org:6969",
+		Path:      "/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso",
+	},
+}
+
 func TestTorrents(t *testing.T) {
 	torrents, err := rt.Torrents()
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	testCases := Torrents{
-		&Torrent{
-			ID:        1,
-			Name:      "debian-mac-8.7.1-amd64-netinst.iso",
-			Hash:      "1C60CBECF4C632EDC7AB546623454B33A295CCEA",
-			DownRate:  0,
-			UpRate:    0,
-			Size:      996 * 262144,
-			Completed: 792 * 262144,
-			Percent:   "79.5%",
-			ETA:       0,
-			Ratio:     0,
-			UpTotal:   0,
-			State:     Error,
-			Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
-			Tracker:   "http://torrent.debian.com:6969/announce",
-			Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
-		},
-		&Torrent{
-			ID:        2,
-			Name:      "ubuntu-17.04-server-amd64.iso",
-			Hash:      "8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648",
-			DownRate:  0,
-			UpRate:    0,
-			Size:      1370 * 524288,
-			Completed: 1370 * 524288,
-			Percent:   "100%",
-			ETA:       0,
-			Ratio:     0,
-			UpTotal:   0,
-			State:     Seeding,
-			Message:   "",
-			Tracker:   "http://torrent.ubuntu.com:6969/announce",
-			Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
-		},
-		&Torrent{
-			ID:        3,
-			Name:      "archlinux-2017.04.01-x86_64.iso",
-			Hash:      "02CA77A6A047FD37F04337437D18F82E61861084",
-			DownRate:  997035,
-			UpRate:    0,
-			Size:      956 * 524288,
-			Completed: 115 * 524288,
-			Percent:   "12.0%",
-			ETA:       442,
-			Ratio:     0,
-			UpTotal:   0,
-			State:     Leeching,
-			Message:   "",
-			Tracker:   "udp://tracker.archlinux.org:6969",
-			Path:      "/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso",
-		},
 	}
 
 	if len(torrents) != len(testCases) {
@@ -107,6 +107,26 @@ func TestTorrents(t *testing.T) {
 			t.Errorf("Expected torrents[%d] and testCases[%d] to be equal, got: \n%v\n%v", i, i, torrents[i], testCases[i])
 		}
 	}
+}
+
+func TestDownload(t *testing.T) {
+	rt.Download("http://releases.ubuntu.com/17.04/ubuntu-17.04-desktop-amd64.iso.torrent")
+}
+
+func TestStop(t *testing.T) {
+	rt.Stop(testCases[0])
+}
+
+func TestStart(t *testing.T) {
+	rt.Start(testCases[0])
+}
+
+func TestCheck(t *testing.T) {
+	rt.Check(testCases[0])
+}
+
+func TestDelete(t *testing.T) {
+	rt.Delete(testCases[0])
 }
 
 func TestSpeeds(t *testing.T) {
@@ -194,6 +214,11 @@ func handleRequest(conn net.Conn) {
 		if _, err := conn.Write([]byte(trackersResp)); err != nil {
 			log.Fatal(err)
 		}
+	case req == downloadReq:
+	case req == stopReq:
+	case req == startReq:
+	case req == checkReq:
+	case req == deleteReq:
 	case req == speedsReq:
 		if _, err := conn.Write([]byte(speedsResp)); err != nil {
 			log.Fatal(err)
@@ -350,6 +375,167 @@ Content-Length: 2092
 </data></array></value></param>
 </params>
 </methodResponse>`
+
+	downloadReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>load.start</methodName>
+<params>
+<param>
+<value><string></string></value>
+</param>
+<param>
+<value><string>http://releases.ubuntu.com/17.04/ubuntu-17.04-desktop-amd64.iso.torrent</string></value>
+</param>
+</params>
+</methodCall>`
+
+	stopReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>d.stop</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
+	startReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>d.start</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
+	checkReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>d.check_hash</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
+	deleteReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>d.erase</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
 
 	trackersReq = `<?xml version='1.0'?>
 <methodCall>
