@@ -494,6 +494,9 @@ const (
 <methodName>load.start</methodName>
 <params>
 <param>
+<value><string></string></value>
+</param>
+<param>
 <value><string>%s</string></value>
 </param>
 </params>
