@@ -73,7 +73,7 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 	scanner := bufio.NewScanner(conn)
 	var id uint64
 	for scanner.Scan() {
-		if scanner.Text() == "<value><array><data>" {
+		if scanner.Text() == startTAG {
 			torrent := new(Torrent)
 
 			id++
@@ -287,7 +287,7 @@ func (r *rtorrent) Speeds() (down, up uint64) {
 
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
-		if scanner.Text() == "<value><array><data>" {
+		if scanner.Text() == startTAG {
 			scanner.Scan()
 			txt := scanner.Text()
 			down = pUint(txt[11 : len(txt)-13])
@@ -304,34 +304,91 @@ func (r *rtorrent) Speeds() (down, up uint64) {
 	return
 }
 
-// Version returns a string represnts rtorrent/libtorrent versions.
-func (r *rtorrent) Version() string {
-	data := encode(versionXML)
+type stats struct {
+	ThrottleUp, ThrottleDown, TotalUp, TotalDown uint64
+	Port                                         string
+}
+
+// Stats returns *stats filled with the proper info.
+func (r *rtorrent) Stats() (*stats, error) {
+	st := new(stats)
+	data := encode(statsXML)
 	conn, err := r.send(data)
 	if err != nil {
-		return "-1/-1"
+		return nil, err
 	}
 	defer conn.Close()
 
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
-		if scanner.Text() == "<value><array><data>" {
+		if scanner.Text() == startTAG {
 			scanner.Scan()
 			txt := scanner.Text()
-			clientVer := txt[15 : len(txt)-17]
+			st.ThrottleUp = pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan() // </data></array></value>
 			scanner.Scan() // <value><array><data>
 
 			scanner.Scan()
 			txt = scanner.Text()
-			libraryVer := txt[15 : len(txt)-17]
+			st.ThrottleDown = pUint(txt[11 : len(txt)-13])
 
-			return fmt.Sprintf("%s/%s", clientVer, libraryVer)
+			scanner.Scan() // </data></array></value>
+			scanner.Scan() // <value><array><data>
+
+			scanner.Scan()
+			txt = scanner.Text()
+			st.TotalUp = pUint(txt[11 : len(txt)-13])
+
+			scanner.Scan() // </data></array></value>
+			scanner.Scan() // <value><array><data>
+
+			scanner.Scan()
+			txt = scanner.Text()
+			st.TotalDown = pUint(txt[11 : len(txt)-13])
+
+			scanner.Scan() // </data></array></value>
+			scanner.Scan() // <value><array><data>
+
+			scanner.Scan()
+			txt = scanner.Text()
+			st.Port = txt[11 : len(txt)-13]
+
 		}
 	}
+	return st, nil
+}
 
-	return "-1/-1"
+// Version returns a string represnts rtorrent/libtorrent versions.
+func (r *rtorrent) Version() (string, error) {
+	data := encode(versionXML)
+	conn, err := r.send(data)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	var clientVer, libraryVer string
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		if scanner.Text() == startTAG {
+			scanner.Scan()
+			txt := scanner.Text()
+			clientVer = txt[15 : len(txt)-17]
+
+			scanner.Scan() // </data></array></value>
+			scanner.Scan() // <value><array><data>
+
+			scanner.Scan()
+			txt = scanner.Text()
+			libraryVer = txt[15 : len(txt)-17]
+
+			break
+
+		}
+	}
+	return fmt.Sprintf("%s/%s", clientVer, libraryVer), nil
+
 }
 
 // getTrackers takes Torrents and fill their tracker fields.
@@ -358,7 +415,7 @@ func (r *rtorrent) getTrackers(ts Torrents) error {
 
 	scanner := bufio.NewScanner(conn)
 	for i := 0; scanner.Scan(); {
-		if scanner.Text() == "<value><array><data>" {
+		if scanner.Text() == startTAG {
 			scanner.Scan()
 			txt := scanner.Text()
 			ts[i].Tracker = txt[15 : len(txt)-17]
@@ -624,6 +681,128 @@ const (
 </params>
 </methodCall>`
 
+	statsXML = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.up.max</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.down.max</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.global_up.total</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.global_down.total</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>network.listen.port</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
 	versionXML = `<?xml version='1.0'?>
 <methodCall>
 <methodName>system.multicall</methodName>
@@ -682,4 +861,6 @@ const (
 </param>
 </params>
 </methodCall>`
+
+	startTAG = "<value><array><data>"
 )
