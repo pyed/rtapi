@@ -144,10 +144,33 @@ func TestSpeeds(t *testing.T) {
 	}
 }
 
+func TestStats(t *testing.T) {
+	st, err := rt.Stats()
+	if err != nil {
+		t.Errorf("Expected no error, got: %s", err)
+	}
+
+	stTestCase := &stats{
+		ThrottleUp:   2048,
+		ThrottleDown: 3072,
+		TotalUp:      49023,
+		TotalDown:    10938487,
+		Port:         "6980",
+	}
+
+	if *st != *stTestCase {
+		t.Errorf("Expected:\n%#v, got:\n%#v", stTestCase, st)
+	}
+
+}
+
 func TestVersion(t *testing.T) {
 	expectedVersion := "0.9.6/0.13.6"
 
-	version := rt.Version()
+	version, err := rt.Version()
+	if err != nil {
+		t.Errorf("Expected no error, got: %s", err)
+	}
 
 	if version != expectedVersion {
 		t.Errorf("Expected the version to be %s, got: %s", expectedVersion, version)
@@ -221,6 +244,10 @@ func handleRequest(conn net.Conn) {
 	case req == deleteReq:
 	case req == speedsReq:
 		if _, err := conn.Write([]byte(speedsResp)); err != nil {
+			log.Fatal(err)
+		}
+	case req == statsReq:
+		if _, err := conn.Write([]byte(statsResp)); err != nil {
 			log.Fatal(err)
 		}
 	case req == versionReq:
@@ -711,6 +738,155 @@ Content-Length: 315
 </data></array></value>
 <value><array><data>
 <value><i8>593</i8></value>
+</data></array></value>
+</data></array></value></param>
+</params>
+</methodResponse>`
+
+	statsReq = `<?xml version='1.0'?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.up.max</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.down.max</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+<value>
+<string/>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.global_up.total</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>throttle.global_down.total</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>network.listen.port</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
+</param>
+</params>
+</methodCall>`
+
+	statsResp = `Status: 200 OK
+Content-Type: text/xml
+Content-Length: 550
+
+<?xml version="1.0" encoding="UTF-8"?>
+<methodResponse>
+<params>
+<param><value><array><data>
+<value><array><data>
+<value><i8>2048</i8></value>
+</data></array></value>
+<value><array><data>
+<value><i8>3072</i8></value>
+</data></array></value>
+<value><array><data>
+<value><i8>49023</i8></value>
+</data></array></value>
+<value><array><data>
+<value><i8>10938487</i8></value>
+</data></array></value>
+<value><array><data>
+<value><i8>6980</i8></value>
 </data></array></value>
 </data></array></value></param>
 </params>
