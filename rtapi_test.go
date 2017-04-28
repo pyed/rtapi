@@ -52,6 +52,7 @@ var testCases = Torrents{
 		Ratio:     0,
 		UpTotal:   0,
 		State:     Error,
+		Age:       1492000001,
 		Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
 		Tracker:   "http://torrent.debian.com:6969/announce",
 		Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
@@ -69,6 +70,7 @@ var testCases = Torrents{
 		Ratio:     0,
 		UpTotal:   0,
 		State:     Seeding,
+		Age:       1492032019,
 		Message:   "",
 		Tracker:   "http://torrent.ubuntu.com:6969/announce",
 		Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
@@ -86,6 +88,7 @@ var testCases = Torrents{
 		Ratio:     0,
 		UpTotal:   0,
 		State:     Leeching,
+		Age:       1492031149,
 		Message:   "",
 		Tracker:   "udp://tracker.archlinux.org:6969",
 		Path:      "/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso",
@@ -323,6 +326,9 @@ const (
 <value><string>d.ratio=</string></value>
 </param>
 <param>
+<value><string>d.creation_date=</string></value>
+</param>
+<param>
 <value><string>d.message=</string></value>
 </param>
 <param>
@@ -345,7 +351,7 @@ const (
 
 	torrentsResp = `Status: 200 OK
 Content-Type: text/xml
-Content-Length: 2092
+Content-Length: 2200
 
 <?xml version="1.0" encoding="UTF-8"?>
 <methodResponse>
@@ -360,6 +366,7 @@ Content-Length: 2092
 <value><i8>262144</i8></value>
 <value><i8>792</i8></value>
 <value><i8>0</i8></value>
+<value><i8>1492000001</i8></value>
 <value><string>Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]</string></value>
 <value><string>/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso</string></value>
 <value><i8>1</i8></value>
@@ -376,6 +383,7 @@ Content-Length: 2092
 <value><i8>524288</i8></value>
 <value><i8>1370</i8></value>
 <value><i8>0</i8></value>
+<value><i8>1492032019</i8></value>
 <value><string></string></value>
 <value><string>/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso</string></value>
 <value><i8>1</i8></value>
@@ -392,6 +400,7 @@ Content-Length: 2092
 <value><i8>524288</i8></value>
 <value><i8>115</i8></value>
 <value><i8>0</i8></value>
+<value><i8>1492031149</i8></value>
 <value><string></string></value>
 <value><string>/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso</string></value>
 <value><i8>1</i8></value>
