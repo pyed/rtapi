@@ -191,7 +191,7 @@ func (r *rtorrent) Stop(ts ...*Torrent) error {
 	xml := new(bytes.Buffer)
 	xml.WriteString(header)
 
-	for i := 0; i < len(ts); i++ {
+	for i := range ts {
 		xml.WriteString(ts[i].Hash)
 		if i != len(ts)-1 {
 			xml.WriteString(body)
@@ -215,7 +215,7 @@ func (r *rtorrent) Start(ts ...*Torrent) error {
 	xml := new(bytes.Buffer)
 	xml.WriteString(header)
 
-	for i := 0; i < len(ts); i++ {
+	for i := range ts {
 		xml.WriteString(ts[i].Hash)
 		if i != len(ts)-1 {
 			xml.WriteString(body)
@@ -239,7 +239,7 @@ func (r *rtorrent) Check(ts ...*Torrent) error {
 	xml := new(bytes.Buffer)
 	xml.WriteString(header)
 
-	for i := 0; i < len(ts); i++ {
+	for i := range ts {
 		xml.WriteString(ts[i].Hash)
 		if i != len(ts)-1 {
 			xml.WriteString(body)
@@ -256,14 +256,14 @@ func (r *rtorrent) Check(ts ...*Torrent) error {
 	return nil
 }
 
-// Delete takes a *Torrent or more to 'd.erase' it/them.
-func (r *rtorrent) Delete(ts ...*Torrent) error {
+// Delete takes *Torrent or more to 'd.erase' it/them, if withData is true, local data will get deleted too.
+func (r *rtorrent) Delete(withData bool, ts ...*Torrent) error {
 	header, body := xmlCon("d.erase")
 
 	xml := new(bytes.Buffer)
 	xml.WriteString(header)
 
-	for i := 0; i < len(ts); i++ {
+	for i := range ts {
 		xml.WriteString(ts[i].Hash)
 		if i != len(ts)-1 {
 			xml.WriteString(body)
@@ -277,7 +277,16 @@ func (r *rtorrent) Delete(ts ...*Torrent) error {
 		return err
 	}
 	conn.Close()
-	return nil
+
+	if withData {
+		for i := range ts {
+			if e := os.RemoveAll(ts[i].Path); e != nil {
+				err = e
+			}
+		}
+	}
+
+	return err
 }
 
 // Speeds returns current Down/Up rates.
@@ -403,7 +412,7 @@ func (r *rtorrent) getTrackers(ts Torrents) error {
 	xml := new(bytes.Buffer)
 	xml.WriteString(header)
 
-	for i := 0; i < len(ts); i++ {
+	for i := range ts {
 		xml.WriteString(ts[i].Hash + ":t0")
 		if i != len(ts)-1 {
 			xml.WriteString(body)
