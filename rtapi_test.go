@@ -129,7 +129,7 @@ func TestCheck(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	rt.Delete(testCases[0])
+	rt.Delete(false, testCases[0])
 }
 
 func TestSpeeds(t *testing.T) {
