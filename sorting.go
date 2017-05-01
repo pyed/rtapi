@@ -4,54 +4,58 @@ import "sort"
 
 // Sorting method on Torrents
 
-type Sorting int8
+type sorting int8
 
 const (
-	Name Sorting = iota
-	NameRev
-	DownRate
-	DownRateRev
-	UpRate
-	UpRateRev
-	Size
-	SizeRev
-	Ratio
-	RatioRev
-	Age
-	AgeRev
-	UpTotal
-	UpTotalRev
+	ByID sorting = iota
+	ByName
+	ByNameRev
+	ByDownRate
+	ByDownRateRev
+	ByUpRate
+	ByUpRateRev
+	BySize
+	BySizeRev
+	ByRatio
+	ByRatioRev
+	ByAge
+	ByAgeRev
+	ByUpTotal
+	ByUpTotalRev
 )
 
-func (t Torrents) Sort(sorting Sorting) {
-	switch sorting {
-	case Name:
+// CurrentSorting holds the sorting in use, ByID is the default.
+var CurrentSorting = ByID
+
+func (t Torrents) Sort(aSorting sorting) {
+	switch aSorting {
+	case ByName:
 		sort.Sort(byName(t))
-	case NameRev:
+	case ByNameRev:
 		sort.Reverse(byName(t))
-	case DownRate:
+	case ByDownRate:
 		sort.Sort(byDownRate(t))
-	case DownRateRev:
+	case ByDownRateRev:
 		sort.Reverse(byDownRate(t))
-	case UpRate:
+	case ByUpRate:
 		sort.Sort(byUpRate(t))
-	case UpRateRev:
+	case ByUpRateRev:
 		sort.Reverse(byUpRate(t))
-	case Size:
+	case BySize:
 		sort.Sort(bySize(t))
-	case SizeRev:
+	case BySizeRev:
 		sort.Reverse(bySize(t))
-	case Ratio:
+	case ByRatio:
 		sort.Sort(byRatio(t))
-	case RatioRev:
+	case ByRatioRev:
 		sort.Reverse(byRatio(t))
-	case Age:
+	case ByAge:
 		sort.Sort(byAge(t))
-	case AgeRev:
+	case ByAgeRev:
 		sort.Reverse(byAge(t))
-	case UpTotal:
+	case ByUpTotal:
 		sort.Sort(byUpTotal(t))
-	case UpTotalRev:
+	case ByUpTotalRev:
 		sort.Reverse(byUpTotal(t))
 	}
 }
