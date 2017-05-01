@@ -170,6 +170,10 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 
 	// set the Tracker field
 	r.getTrackers(torrents)
+
+	if CurrentSorting != ByID { // torrents are already sorted by ID
+		torrents.Sort(CurrentSorting)
+	}
 	return torrents, nil
 }
 
