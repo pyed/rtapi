@@ -22,7 +22,7 @@ const (
 
 // Torrent represents a single torrent.
 type Torrent struct {
-	ID        uint64
+	ID        int
 	Name      string
 	Hash      string
 	DownRate  uint64
@@ -72,13 +72,13 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 
 	// Fuck XML. http://foaas.com/XML/Everyone
 	scanner := bufio.NewScanner(conn)
-	var id uint64
+	var id int
 	for scanner.Scan() {
 		if scanner.Text() == startTAG {
 			torrent := new(Torrent)
 
-			id++
 			torrent.ID = id
+			id++
 
 			scanner.Scan()
 			txt := scanner.Text()
@@ -175,6 +175,21 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 		torrents.Sort(CurrentSorting)
 	}
 	return torrents, nil
+}
+
+// GetTorrent takes a hash and returns *Torrent
+func (r *rtorrent) GetTorrent(hash string) (*Torrent, error) {
+	torrents, err := r.Torrents()
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range torrents {
+		if torrents[i].Hash == hash {
+			return torrents[i], nil
+		}
+	}
+	return nil, fmt.Errorf("Error: No torrent with hash: %s", hash)
 }
 
 // Download takes URL to a .torrent file to start downloading it.
@@ -509,7 +524,7 @@ func xmlCon(method string) (h string, b string) {
 
 // XML constants
 const (
-	torrentsXML = `<?xml version='1.0'?>
+	torrentsXML = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>d.multicall2</methodName>
 <params>
@@ -567,7 +582,7 @@ const (
 </params>
 </methodCall>`
 
-	downloadXML = `<?xml version='1.0'?>
+	downloadXML = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>load.start</methodName>
 <params>
@@ -580,7 +595,7 @@ const (
 </params>
 </methodCall>`
 
-	header = `<?xml version='1.0'?>
+	header = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -643,7 +658,7 @@ const (
 </params>
 </methodCall>`
 
-	speedsXML = `<?xml version='1.0'?>
+	speedsXML = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -702,7 +717,7 @@ const (
 </params>
 </methodCall>`
 
-	statsXML = `<?xml version='1.0'?>
+	statsXML = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -824,7 +839,7 @@ const (
 </params>
 </methodCall>`
 
-	versionXML = `<?xml version='1.0'?>
+	versionXML = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>

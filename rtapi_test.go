@@ -40,7 +40,7 @@ func TestRtorrent(t *testing.T) {
 
 var testCases = Torrents{
 	&Torrent{
-		ID:        1,
+		ID:        0,
 		Name:      "debian-mac-8.7.1-amd64-netinst.iso",
 		Hash:      "1C60CBECF4C632EDC7AB546623454B33A295CCEA",
 		DownRate:  0,
@@ -58,7 +58,7 @@ var testCases = Torrents{
 		Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
 	},
 	&Torrent{
-		ID:        2,
+		ID:        1,
 		Name:      "ubuntu-17.04-server-amd64.iso",
 		Hash:      "8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648",
 		DownRate:  0,
@@ -76,7 +76,7 @@ var testCases = Torrents{
 		Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
 	},
 	&Torrent{
-		ID:        3,
+		ID:        2,
 		Name:      "archlinux-2017.04.01-x86_64.iso",
 		Hash:      "02CA77A6A047FD37F04337437D18F82E61861084",
 		DownRate:  997035,
@@ -109,6 +109,17 @@ func TestTorrents(t *testing.T) {
 		if *torrents[i] != *testCases[i] {
 			t.Errorf("Expected torrents[%d] and testCases[%d] to be equal, got: \n%v\n%v", i, i, torrents[i], testCases[i])
 		}
+	}
+}
+
+func TestGetTorrent(t *testing.T) {
+	arch, err := rt.GetTorrent("02CA77A6A047FD37F04337437D18F82E61861084")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if *arch != *testCases[2] {
+		t.Errorf("Expected 'arch' to match 'testCases[2]', got:\narch:%v\ntestCases[2]:%v", *arch, *testCases[2])
 	}
 }
 
@@ -291,7 +302,7 @@ func BenchmarkTorrents(b *testing.B) {
 }
 
 const (
-	torrentsReq = `<?xml version='1.0'?>
+	torrentsReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>d.multicall2</methodName>
 <params>
@@ -412,7 +423,7 @@ Content-Length: 2200
 </params>
 </methodResponse>`
 
-	downloadReq = `<?xml version='1.0'?>
+	downloadReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>load.start</methodName>
 <params>
@@ -425,7 +436,7 @@ Content-Length: 2200
 </params>
 </methodCall>`
 
-	stopReq = `<?xml version='1.0'?>
+	stopReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -462,7 +473,7 @@ Content-Length: 2200
 </params>
 </methodCall>`
 
-	startReq = `<?xml version='1.0'?>
+	startReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -499,7 +510,7 @@ Content-Length: 2200
 </params>
 </methodCall>`
 
-	checkReq = `<?xml version='1.0'?>
+	checkReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -536,7 +547,7 @@ Content-Length: 2200
 </params>
 </methodCall>`
 
-	deleteReq = `<?xml version='1.0'?>
+	deleteReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -573,7 +584,7 @@ Content-Length: 2200
 </params>
 </methodCall>`
 
-	trackersReq = `<?xml version='1.0'?>
+	trackersReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -675,7 +686,7 @@ Content-Length: 513
 </params>
 </methodResponse>`
 
-	speedsReq = `<?xml version='1.0'?>
+	speedsReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -752,7 +763,7 @@ Content-Length: 315
 </params>
 </methodResponse>`
 
-	statsReq = `<?xml version='1.0'?>
+	statsReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
@@ -901,7 +912,7 @@ Content-Length: 550
 </params>
 </methodResponse>`
 
-	versionReq = `<?xml version='1.0'?>
+	versionReq = `<?xml version="1.0" encoding="UTF-8"?>
 <methodCall>
 <methodName>system.multicall</methodName>
 <params>
