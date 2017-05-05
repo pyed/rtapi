@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 )
@@ -35,7 +36,7 @@ type Torrent struct {
 	UpTotal   uint64
 	State     string
 	Message   string
-	Tracker   string
+	Tracker   *url.URL
 	Path      string
 }
 
@@ -446,7 +447,7 @@ func (r *rtorrent) getTrackers(ts Torrents) error {
 		if scanner.Text() == startTAG {
 			scanner.Scan()
 			txt := scanner.Text()
-			ts[i].Tracker = txt[15 : len(txt)-17]
+			ts[i].Tracker, _ = url.Parse(txt[15 : len(txt)-17])
 			i++
 		}
 	}
