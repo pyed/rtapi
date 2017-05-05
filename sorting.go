@@ -7,7 +7,7 @@ import "sort"
 type sorting int8
 
 const (
-	ByID sorting = iota
+	DefaultSorting sorting = iota
 	ByName
 	ByNameRev
 	ByDownRate
@@ -24,8 +24,8 @@ const (
 	ByUpTotalRev
 )
 
-// CurrentSorting holds the sorting in use, ByID is the default.
-var CurrentSorting = ByID
+// CurrentSorting holds the sorting in use.
+var CurrentSorting = DefaultSorting
 
 func (t Torrents) Sort(aSorting sorting) {
 	switch aSorting {

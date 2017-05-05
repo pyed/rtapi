@@ -22,7 +22,6 @@ const (
 
 // Torrent represents a single torrent.
 type Torrent struct {
-	ID        int
 	Name      string
 	Hash      string
 	DownRate  uint64
@@ -72,13 +71,9 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 
 	// Fuck XML. http://foaas.com/XML/Everyone
 	scanner := bufio.NewScanner(conn)
-	var id int
 	for scanner.Scan() {
 		if scanner.Text() == startTAG {
 			torrent := new(Torrent)
-
-			torrent.ID = id
-			id++
 
 			scanner.Scan()
 			txt := scanner.Text()
@@ -171,7 +166,7 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 	// set the Tracker field
 	r.getTrackers(torrents)
 
-	if CurrentSorting != ByID { // torrents are already sorted by ID
+	if CurrentSorting != DefaultSorting { // torrents are already sorted by ID
 		torrents.Sort(CurrentSorting)
 	}
 	return torrents, nil
