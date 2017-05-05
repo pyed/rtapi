@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"testing"
@@ -38,6 +39,10 @@ func TestRtorrent(t *testing.T) {
 	rt = Rtorrent(testAddress)
 }
 
+var tr0, _ = url.Parse("http://torrent.debian.com:6969/announce")
+var tr1, _ = url.Parse("http://torrent.ubuntu.com:6969/announce")
+var tr2, _ = url.Parse("udp://tracker.archlinux.org:6969")
+
 var testCases = Torrents{
 	&Torrent{
 		Name:      "debian-mac-8.7.1-amd64-netinst.iso",
@@ -53,7 +58,7 @@ var testCases = Torrents{
 		State:     Error,
 		Age:       1492000001,
 		Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
-		Tracker:   "http://torrent.debian.com:6969/announce",
+		Tracker:   tr0,
 		Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
 	},
 	&Torrent{
@@ -70,7 +75,7 @@ var testCases = Torrents{
 		State:     Seeding,
 		Age:       1492032019,
 		Message:   "",
-		Tracker:   "http://torrent.ubuntu.com:6969/announce",
+		Tracker:   tr1,
 		Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
 	},
 	&Torrent{
@@ -87,7 +92,7 @@ var testCases = Torrents{
 		State:     Leeching,
 		Age:       1492031149,
 		Message:   "",
-		Tracker:   "udp://tracker.archlinux.org:6969",
+		Tracker:   tr2,
 		Path:      "/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso",
 	},
 }
@@ -103,7 +108,7 @@ func TestTorrents(t *testing.T) {
 	}
 
 	for i := range torrents {
-		if *torrents[i] != *testCases[i] {
+		if !match(torrents[i], testCases[i]) {
 			t.Errorf("Expected torrents[%d] and testCases[%d] to be equal, got: \n%v\n%v", i, i, torrents[i], testCases[i])
 		}
 	}
@@ -115,7 +120,7 @@ func TestGetTorrent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if *arch != *testCases[2] {
+	if !match(arch, testCases[2]) {
 		t.Errorf("Expected 'arch' to match 'testCases[2]', got:\narch:%v\ntestCases[2]:%v", *arch, *testCases[2])
 	}
 }
@@ -296,6 +301,27 @@ func BenchmarkTorrents(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rt.Torrents()
 	}
+}
+
+func match(a, b *Torrent) bool {
+	if a.Name != b.Name ||
+		a.Hash != b.Hash ||
+		a.DownRate != b.DownRate ||
+		a.UpRate != b.UpRate ||
+		a.Size != b.Size ||
+		a.Completed != b.Completed ||
+		a.Percent != b.Percent ||
+		a.ETA != b.ETA ||
+		a.Ratio != b.Ratio ||
+		a.Age != b.Age ||
+		a.UpTotal != b.UpTotal ||
+		a.State != b.State ||
+		a.Message != b.Message ||
+		*a.Tracker != *b.Tracker ||
+		a.Path != b.Path {
+		return false
+	}
+	return true
 }
 
 const (
