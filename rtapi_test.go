@@ -40,7 +40,6 @@ func TestRtorrent(t *testing.T) {
 
 var testCases = Torrents{
 	&Torrent{
-		ID:        0,
 		Name:      "debian-mac-8.7.1-amd64-netinst.iso",
 		Hash:      "1C60CBECF4C632EDC7AB546623454B33A295CCEA",
 		DownRate:  0,
@@ -58,7 +57,6 @@ var testCases = Torrents{
 		Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
 	},
 	&Torrent{
-		ID:        1,
 		Name:      "ubuntu-17.04-server-amd64.iso",
 		Hash:      "8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648",
 		DownRate:  0,
@@ -76,7 +74,6 @@ var testCases = Torrents{
 		Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
 	},
 	&Torrent{
-		ID:        2,
 		Name:      "archlinux-2017.04.01-x86_64.iso",
 		Hash:      "02CA77A6A047FD37F04337437D18F82E61861084",
 		DownRate:  997035,
