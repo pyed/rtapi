@@ -19,7 +19,10 @@ import (
 )
 
 func main() {
-	rt := rtapi.Rtorrent("localhost:5000") // Or /path/to/socket for "scgi_local".
+	rt, err := rtapi.NewRtorrent("localhost:5000") // Or /path/to/socket for "scgi_local".
+	if err != nil {
+		// ...
+	}
 
 	// Get torrents
 	torrents, err := rt.Torrents()
