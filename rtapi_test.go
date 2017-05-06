@@ -33,10 +33,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-var rt *rtorrent
+var rt *Rtorrent
 
 func TestRtorrent(t *testing.T) {
-	rt = Rtorrent(testAddress)
+	var err error
+	rt, err = NewRtorrent(testAddress)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 var tr0, _ = url.Parse("http://torrent.debian.com:6969/announce")
@@ -182,14 +186,8 @@ func TestStats(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	expectedVersion := "0.9.6/0.13.6"
-
-	version, err := rt.Version()
-	if err != nil {
-		t.Errorf("Expected no error, got: %s", err)
-	}
-
-	if version != expectedVersion {
-		t.Errorf("Expected the version to be %s, got: %s", expectedVersion, version)
+	if rt.Version != expectedVersion {
+		t.Errorf("Expected Version to be %s, got: %s", expectedVersion, rt.Version)
 	}
 }
 
@@ -297,7 +295,10 @@ func getContentLen(reader io.Reader) int {
 }
 
 func BenchmarkTorrents(b *testing.B) {
-	rt := Rtorrent(testAddress)
+	rt, err := NewRtorrent(testAddress)
+	if err != nil {
+		log.Fatal(err)
+	}
 	for i := 0; i < b.N; i++ {
 		rt.Torrents()
 	}

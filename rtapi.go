@@ -43,24 +43,32 @@ type Torrent struct {
 // Torrents is a slice of *Torrent.
 type Torrents []*Torrent
 
-// rtorrent holds the network and address e.g.'tcp|localhost:5000' or 'unix|path/to/socket'.
-type rtorrent struct {
-	network, address string
+// Rtorrent holds the network and address e.g.'tcp|localhost:5000' or 'unix|path/to/socket'.
+type Rtorrent struct {
+	network, address, Version string
 }
 
-// Rtorrent takes the address, defined in .rtorrent.rc
-func Rtorrent(address string) *rtorrent {
+// NewRtorrent takes the address, defined in .rtorrent.rc
+func NewRtorrent(address string) (*Rtorrent, error) {
 	network := "tcp"
 
 	if _, err := os.Stat(address); err == nil {
 		network = "unix"
 	}
 
-	return &rtorrent{network, address}
+	rt := &Rtorrent{network: network, address: address}
+
+	ver, err := rt.getVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	rt.Version = ver
+	return rt, nil
 }
 
 // Torrents returns a slice that contains all the torrents.
-func (r *rtorrent) Torrents() (Torrents, error) {
+func (r *Rtorrent) Torrents() (Torrents, error) {
 	data := encode(torrentsXML)
 	conn, err := r.send(data)
 	if err != nil {
@@ -174,7 +182,7 @@ func (r *rtorrent) Torrents() (Torrents, error) {
 }
 
 // GetTorrent takes a hash and returns *Torrent
-func (r *rtorrent) GetTorrent(hash string) (*Torrent, error) {
+func (r *Rtorrent) GetTorrent(hash string) (*Torrent, error) {
 	torrents, err := r.Torrents()
 	if err != nil {
 		return nil, err
@@ -189,7 +197,7 @@ func (r *rtorrent) GetTorrent(hash string) (*Torrent, error) {
 }
 
 // Download takes URL to a .torrent file to start downloading it.
-func (r *rtorrent) Download(url string) error {
+func (r *Rtorrent) Download(url string) error {
 	data := encode(fmt.Sprintf(downloadXML, url))
 	conn, err := r.send(data)
 	if err != nil {
@@ -200,7 +208,7 @@ func (r *rtorrent) Download(url string) error {
 }
 
 // Stop takes a *Torrent or more to 'd.stop' it/them.
-func (r *rtorrent) Stop(ts ...*Torrent) error {
+func (r *Rtorrent) Stop(ts ...*Torrent) error {
 	header, body := xmlCon("d.stop")
 
 	xml := new(bytes.Buffer)
@@ -224,7 +232,7 @@ func (r *rtorrent) Stop(ts ...*Torrent) error {
 }
 
 // Start takes a *Torrent or more to 'd.start' it/them.
-func (r *rtorrent) Start(ts ...*Torrent) error {
+func (r *Rtorrent) Start(ts ...*Torrent) error {
 	header, body := xmlCon("d.start")
 
 	xml := new(bytes.Buffer)
@@ -248,7 +256,7 @@ func (r *rtorrent) Start(ts ...*Torrent) error {
 }
 
 // Check takes a *Torrent or more to 'd.check_hash' it/them.
-func (r *rtorrent) Check(ts ...*Torrent) error {
+func (r *Rtorrent) Check(ts ...*Torrent) error {
 	header, body := xmlCon("d.check_hash")
 
 	xml := new(bytes.Buffer)
@@ -272,7 +280,7 @@ func (r *rtorrent) Check(ts ...*Torrent) error {
 }
 
 // Delete takes *Torrent or more to 'd.erase' it/them, if withData is true, local data will get deleted too.
-func (r *rtorrent) Delete(withData bool, ts ...*Torrent) error {
+func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
 	header, body := xmlCon("d.erase")
 
 	xml := new(bytes.Buffer)
@@ -305,7 +313,7 @@ func (r *rtorrent) Delete(withData bool, ts ...*Torrent) error {
 }
 
 // Speeds returns current Down/Up rates.
-func (r *rtorrent) Speeds() (down, up uint64) {
+func (r *Rtorrent) Speeds() (down, up uint64) {
 	data := encode(speedsXML)
 	conn, err := r.send(data)
 	if err != nil {
@@ -339,7 +347,7 @@ type stats struct {
 }
 
 // Stats returns *stats filled with the proper info.
-func (r *rtorrent) Stats() (*stats, error) {
+func (r *Rtorrent) Stats() (*stats, error) {
 	st := new(stats)
 	data := encode(statsXML)
 	conn, err := r.send(data)
@@ -388,8 +396,8 @@ func (r *rtorrent) Stats() (*stats, error) {
 	return st, nil
 }
 
-// Version returns a string represnts rtorrent/libtorrent versions.
-func (r *rtorrent) Version() (string, error) {
+// getVersion returns a string represnts rtorrent/libtorrent versions.
+func (r *Rtorrent) getVersion() (string, error) {
 	data := encode(versionXML)
 	conn, err := r.send(data)
 	if err != nil {
@@ -421,7 +429,7 @@ func (r *rtorrent) Version() (string, error) {
 }
 
 // getTrackers takes Torrents and fill their tracker fields.
-func (r *rtorrent) getTrackers(ts Torrents) error {
+func (r *Rtorrent) getTrackers(ts Torrents) error {
 	header, body := xmlCon("t.url")
 
 	xml := new(bytes.Buffer)
@@ -470,7 +478,7 @@ func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
 }
 
 // send takes scgi formated data and returns net.Conn
-func (r *rtorrent) send(data []byte) (net.Conn, error) {
+func (r *Rtorrent) send(data []byte) (net.Conn, error) {
 	conn, err := net.Dial(r.network, r.address)
 	if err != nil {
 		return nil, err
