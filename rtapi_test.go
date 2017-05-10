@@ -57,8 +57,8 @@ var testCases = Torrents{
 		Completed: 792 * 262144,
 		Percent:   "79.5%",
 		ETA:       0,
-		Ratio:     0,
-		UpTotal:   0,
+		Ratio:     1.29,
+		UpTotal:   267827281,
 		State:     Error,
 		Age:       1492000001,
 		Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
@@ -386,7 +386,7 @@ const (
 
 	torrentsResp = `Status: 200 OK
 Content-Type: text/xml
-Content-Length: 2200
+Content-Length: 2203
 
 <?xml version="1.0" encoding="UTF-8"?>
 <methodResponse>
@@ -400,7 +400,7 @@ Content-Length: 2200
 <value><i8>996</i8></value>
 <value><i8>262144</i8></value>
 <value><i8>792</i8></value>
-<value><i8>0</i8></value>
+<value><i8>1290</i8></value>
 <value><i8>1492000001</i8></value>
 <value><string>Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]</string></value>
 <value><string>/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso</string></value>

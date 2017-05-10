@@ -122,7 +122,7 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 			ratio := pUint(txt[11 : len(txt)-13])
 			torrent.Ratio = round(float64(ratio)/1000, 2)
 
-			torrent.UpTotal = torrent.Completed * (ratio / 1000)
+			torrent.UpTotal = uint64(round(float64(torrent.Completed)*(float64(ratio)/1000), 1))
 
 			scanner.Scan()
 			txt = scanner.Text()
