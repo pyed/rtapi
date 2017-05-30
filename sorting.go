@@ -32,31 +32,31 @@ func (t Torrents) Sort(aSorting sorting) {
 	case ByName:
 		sort.Sort(byName(t))
 	case ByNameRev:
-		sort.Reverse(byName(t))
+		sort.Sort(sort.Reverse(byName(t)))
 	case ByDownRate:
 		sort.Sort(byDownRate(t))
 	case ByDownRateRev:
-		sort.Reverse(byDownRate(t))
+		sort.Sort(sort.Reverse(byDownRate(t)))
 	case ByUpRate:
 		sort.Sort(byUpRate(t))
 	case ByUpRateRev:
-		sort.Reverse(byUpRate(t))
+		sort.Sort(sort.Reverse(byUpRate(t)))
 	case BySize:
 		sort.Sort(bySize(t))
 	case BySizeRev:
-		sort.Reverse(bySize(t))
+		sort.Sort(sort.Reverse(bySize(t)))
 	case ByRatio:
 		sort.Sort(byRatio(t))
 	case ByRatioRev:
-		sort.Reverse(byRatio(t))
+		sort.Sort(sort.Reverse(byRatio(t)))
 	case ByAge:
 		sort.Sort(byAge(t))
 	case ByAgeRev:
-		sort.Reverse(byAge(t))
+		sort.Sort(sort.Reverse(byAge(t)))
 	case ByUpTotal:
 		sort.Sort(byUpTotal(t))
 	case ByUpTotalRev:
-		sort.Reverse(byUpTotal(t))
+		sort.Sort(sort.Reverse(byUpTotal(t)))
 	}
 }
 
