@@ -61,6 +61,7 @@ var testCases = Torrents{
 		UpTotal:   267827281,
 		State:     Error,
 		Age:       1492000001,
+		AgeLoad:   1492001001,
 		Message:   `Tracker: [Failure reason "Requested download is .......... difficult to install. --linus."]`,
 		Tracker:   tr0,
 		Path:      "/Users/abdulelah/rtorrent/download/debian-mac-8.7.1-amd64-netinst.iso",
@@ -78,6 +79,7 @@ var testCases = Torrents{
 		UpTotal:   0,
 		State:     Seeding,
 		Age:       1492032019,
+		AgeLoad:   1492033019,
 		Message:   "",
 		Tracker:   tr1,
 		Path:      "/Users/abdulelah/rtorrent/download/ubuntu-17.04-server-amd64.iso",
@@ -95,6 +97,7 @@ var testCases = Torrents{
 		UpTotal:   0,
 		State:     Leeching,
 		Age:       1492031149,
+		AgeLoad:   1492032149,
 		Message:   "",
 		Tracker:   tr2,
 		Path:      "/Users/abdulelah/rtorrent/download/archlinux-2017.04.01-x86_64.iso",
@@ -315,6 +318,7 @@ func match(a, b *Torrent) bool {
 		a.ETA != b.ETA ||
 		a.Ratio != b.Ratio ||
 		a.Age != b.Age ||
+		a.AgeLoad != b.AgeLoad ||
 		a.UpTotal != b.UpTotal ||
 		a.State != b.State ||
 		a.Message != b.Message ||
@@ -362,6 +366,9 @@ const (
 </param>
 <param>
 <value><string>d.creation_date=</string></value>
+</param>
+<param>
+<value><string>d.load_date=</string></value>
 </param>
 <param>
 <value><string>d.message=</string></value>

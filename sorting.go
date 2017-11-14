@@ -20,6 +20,8 @@ const (
 	ByRatioRev
 	ByAge
 	ByAgeRev
+	ByAgeLoad
+	ByAgeLoadRev
 	ByUpTotal
 	ByUpTotalRev
 )
@@ -55,6 +57,10 @@ func (t Torrents) Sort(aSorting sorting) {
 		sort.Sort(sort.Reverse(byAge(t)))
 	case ByUpTotal:
 		sort.Sort(byUpTotal(t))
+	case ByAgeLoad:
+		sort.Sort(byAgeLoad(t))
+	case ByAgeLoadRev:
+		sort.Sort(sort.Reverse(byAgeLoad(t)))
 	case ByUpTotalRev:
 		sort.Sort(sort.Reverse(byUpTotal(t)))
 	}
@@ -95,6 +101,13 @@ type byAge Torrents
 func (s byAge) Len() int           { return len(s) }
 func (s byAge) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s byAge) Less(i, j int) bool { return s[i].Age < s[j].Age }
+
+type byAgeLoad Torrents
+
+func (s byAgeLoad) Len() int           { return len(s) }
+func (s byAgeLoad) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s byAgeLoad) Less(i, j int) bool { return s[i].AgeLoad < s[j].AgeLoad }
+
 
 type byUpTotal Torrents
 

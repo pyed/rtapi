@@ -13,6 +13,7 @@ func TestSorting(t *testing.T) {
 			Size:     1024,
 			Ratio:    2.3,
 			Age:      1492021111,
+			AgeLoad:  1492022222,
 			UpTotal:  93413,
 		},
 		&Torrent{
@@ -22,6 +23,7 @@ func TestSorting(t *testing.T) {
 			Size:     4048,
 			Ratio:    0.3,
 			Age:      1492929111,
+			AgeLoad:  1492929122,
 			UpTotal:  993413,
 		},
 		&Torrent{
@@ -31,6 +33,7 @@ func TestSorting(t *testing.T) {
 			Size:     448,
 			Ratio:    9.3,
 			Age:      1492929977,
+			AgeLoad:  1492929988,
 			UpTotal:  9176445,
 		},
 	}
@@ -75,6 +78,13 @@ func TestSorting(t *testing.T) {
 		torrents[2].Age != 1492929977 {
 		t.Errorf("byAge: Expected: 1492021111, 1492929111, 1492929977, got: %d, %d, %d",
 			torrents[0].Age, torrents[1].Age, torrents[2].Age)
+	}
+
+	torrents.Sort(ByAgeLoad)
+	if torrents[0].AgeLoad != 1492022222 ||
+		torrents[2].AgeLoad != 1492929988 {
+		t.Errorf("byAgeLoad: Expected: 1492022222, 1492929122, 1492929988, got: %d, %d, %d",
+			torrents[0].AgeLoad, torrents[1].AgeLoad, torrents[2].AgeLoad)
 	}
 
 	torrents.Sort(ByUpTotal)

@@ -33,6 +33,7 @@ type Torrent struct {
 	ETA       uint64
 	Ratio     float64
 	Age       uint64
+	AgeLoad   uint64
 	UpTotal   uint64
 	State     string
 	Message   string
@@ -127,6 +128,10 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 			scanner.Scan()
 			txt = scanner.Text()
 			torrent.Age = pUint(txt[11 : len(txt)-13])
+
+			scanner.Scan()
+			txt = scanner.Text()
+			torrent.AgeLoad = pUint(txt[11 : len(txt)-13])
 
 			scanner.Scan()
 			txt = scanner.Text()
@@ -564,6 +569,9 @@ const (
 </param>
 <param>
 <value><string>d.creation_date=</string></value>
+</param>
+<param>
+<value><string>d.load_date=</string></value>
 </param>
 <param>
 <value><string>d.message=</string></value>
