@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"html"
 	"net"
 	"net/url"
 	"os"
@@ -86,7 +87,7 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 
 			scanner.Scan()
 			txt := scanner.Text()
-			torrent.Name = txt[15 : len(txt)-17]
+			torrent.Name = html.UnescapeString(txt[15 : len(txt)-17])
 
 			scanner.Scan()
 			txt = scanner.Text()
@@ -134,7 +135,7 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 
 			scanner.Scan()
 			txt = scanner.Text()
-			torrent.Path = txt[15 : len(txt)-17]
+			torrent.Path = html.UnescapeString(txt[15 : len(txt)-17])
 
 			scanner.Scan()
 			txt = scanner.Text()
