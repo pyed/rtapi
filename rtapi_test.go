@@ -381,6 +381,9 @@ const (
 <param>
 <value><string>d.hashing=</string></value>
 </param>
+<param>
+<value><string>d.custom1=</string></value>
+</param>
 </params>
 </methodCall>`
 
@@ -408,6 +411,7 @@ Content-Length: 2203
 <value><string>leech</string></value>
 <value><i8>0</i8></value>
 <value><i8>0</i8></value>
+<value><string></string></value>
 </data></array></value>
 <value><array><data>
 <value><string>ubuntu-17.04-server-amd64.iso</string></value>
@@ -425,6 +429,7 @@ Content-Length: 2203
 <value><string>seed</string></value>
 <value><i8>1</i8></value>
 <value><i8>0</i8></value>
+<value><string></string></value>
 </data></array></value>
 <value><array><data>
 <value><string>archlinux-2017.04.01-x86_64.iso</string></value>
@@ -442,6 +447,7 @@ Content-Length: 2203
 <value><string>leech</string></value>
 <value><i8>0</i8></value>
 <value><i8>0</i8></value>
+<value><string></string></value>
 </data></array></value>
 </data></array></value></param>
 </params>

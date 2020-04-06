@@ -39,6 +39,7 @@ type Torrent struct {
 	Message   string
 	Tracker   *url.URL
 	Path      string
+	Label     string // ruTorrent lables
 }
 
 // Torrents is a slice of *Torrent.
@@ -152,6 +153,10 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 			scanner.Scan()
 			txt = scanner.Text()
 			dHashing := txt[11 : len(txt)-13]
+
+			scanner.Scan()
+			txt = scanner.Text()
+			torrent.Label = txt[15 : len(txt)-17]
 
 			// figure out the State
 			switch {
@@ -583,6 +588,9 @@ const (
 </param>
 <param>
 <value><string>d.hashing=</string></value>
+</param>
+<param>
+<value><string>d.custom1=</string></value>
 </param>
 </params>
 </methodCall>`
