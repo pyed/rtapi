@@ -171,11 +171,12 @@ func TestStats(t *testing.T) {
 	}
 
 	stTestCase := &stats{
-		ThrottleUp:   2048,
-		ThrottleDown: 3072,
-		TotalUp:      49023,
-		TotalDown:    10938487,
+		ThrottleUp:   0,
+		ThrottleDown: 0,
+		TotalUp:      6841,
+		TotalDown:    7476,
 		Port:         "6980",
+		Directory:    "/home/Downloads",
 	}
 
 	if *st != *stTestCase {
@@ -908,6 +909,25 @@ Content-Length: 315
 </member>
 </struct>
 </value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>directory.default</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
 </data>
 </array>
 </value>
@@ -917,26 +937,29 @@ Content-Length: 315
 
 	statsResp = `Status: 200 OK
 Content-Type: text/xml
-Content-Length: 550
+Content-Length: 635
 
 <?xml version="1.0" encoding="UTF-8"?>
 <methodResponse>
 <params>
 <param><value><array><data>
 <value><array><data>
-<value><i8>2048</i8></value>
+<value><i8>0</i8></value>
 </data></array></value>
 <value><array><data>
-<value><i8>3072</i8></value>
+<value><i8>0</i8></value>
 </data></array></value>
 <value><array><data>
-<value><i8>49023</i8></value>
+<value><i8>6841</i8></value>
 </data></array></value>
 <value><array><data>
-<value><i8>10938487</i8></value>
+<value><i8>7476</i8></value>
 </data></array></value>
 <value><array><data>
 <value><i8>6980</i8></value>
+</data></array></value>
+<value><array><data>
+<value><string>/home/Downloads</string></value>
 </data></array></value>
 </data></array></value></param>
 </params>

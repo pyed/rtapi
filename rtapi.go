@@ -45,6 +45,18 @@ type Torrent struct {
 // Torrents is a slice of *Torrent.
 type Torrents []*Torrent
 
+// DotTorrentWithOptions is used when adding .torrent file with options.        ;
+// the options get passed via the "Caption" when sending a file via telegram ;
+// telegram, e.g d=/dir/to/downloads l=Software, will save the added torrent ;
+// torrent to the specified direcotry, and will assigne the label "Software" ;
+// to it, labels are saved to "d.custom1", which is used by ruTorrent.       ;
+type DotTorrentWithOptions struct {
+	Link  string
+	Name  string
+	Dir   string
+	Label string
+}
+
 // Rtorrent holds the network and address e.g.'tcp|localhost:5000' or 'unix|path/to/socket'.
 type Rtorrent struct {
 	network, address, Version string
@@ -213,6 +225,25 @@ func (r *Rtorrent) Download(url string) error {
 	return nil
 }
 
+// DownloadWithOptions takes *DotTorrentWithOptions downloading it.
+func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
+	// if tFile.Dir is empty, set to default
+	if tFile.Dir == "" {
+		stats, err := r.Stats()
+		if err != nil {
+			return err
+		}
+		tFile.Dir = stats.Directory
+	}
+	data := encode(fmt.Sprintf(donwloadXMLwithOptions, tFile.Link, tFile.Dir, tFile.Label))
+	conn, err := r.send(data)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
+}
+
 // Stop takes a *Torrent or more to 'd.stop' it/them.
 func (r *Rtorrent) Stop(ts ...*Torrent) error {
 	header, body := xmlCon("d.stop")
@@ -349,7 +380,7 @@ func (r *Rtorrent) Speeds() (down, up uint64) {
 
 type stats struct {
 	ThrottleUp, ThrottleDown, TotalUp, TotalDown uint64
-	Port                                         string
+	Port, Directory                              string
 }
 
 // Stats returns *stats filled with the proper info.
@@ -396,6 +427,13 @@ func (r *Rtorrent) Stats() (*stats, error) {
 			scanner.Scan()
 			txt = scanner.Text()
 			st.Port = txt[11 : len(txt)-13]
+
+			scanner.Scan() // </data></array></value>
+			scanner.Scan() // <value><array><data>
+
+			scanner.Scan()
+			txt = scanner.Text()
+			st.Directory = txt[15 : len(txt)-17]
 
 		}
 	}
@@ -604,6 +642,52 @@ const (
 </param>
 <param>
 <value><string>%s</string></value>
+</param>
+</params>
+</methodCall>`
+
+	donwloadXMLwithOptions = `<?xml version="1.0" encoding="UTF-8"?>
+<methodCall>
+<methodName>system.multicall</methodName>
+<params>
+<param>
+<value>
+<array>
+<data>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>load.start</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+<value>
+<string/>
+</value>
+<value>
+<string>%s</string>
+</value>
+<value>
+<string>d.directory.set="%s"</string>
+</value>
+<value>
+<string>d.custom1.set=%s</string>
+</value>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+</data>
+</array>
+</value>
 </param>
 </params>
 </methodCall>`
@@ -832,6 +916,25 @@ const (
 <name>methodName</name>
 <value>
 <string>network.listen.port</string>
+</value>
+</member>
+<member>
+<name>params</name>
+<value>
+<array>
+<data>
+</data>
+</array>
+</value>
+</member>
+</struct>
+</value>
+<value>
+<struct>
+<member>
+<name>methodName</name>
+<value>
+<string>directory.default</string>
 </value>
 </member>
 <member>
