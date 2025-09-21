@@ -7,10 +7,12 @@ import (
 	"bytes"
 	"fmt"
 	"html"
+	"math"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -94,6 +96,7 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 
 	// Fuck XML. http://foaas.com/XML/Everyone
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
 	for scanner.Scan() {
 		if scanner.Text() == startTAG {
 			torrent := new(Torrent)
@@ -190,8 +193,14 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
 	// set the Tracker field
-	r.getTrackers(torrents)
+	if err := r.getTrackers(torrents); err != nil {
+		return nil, err
+	}
 
 	if CurrentSorting != DefaultSorting { // torrents are already sorted by ID
 		torrents.Sort(CurrentSorting)
@@ -375,6 +384,10 @@ func (r *Rtorrent) Speeds() (down, up uint64) {
 			return
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		down, up = 0, 0
+	}
+
 	return
 }
 
@@ -437,6 +450,10 @@ func (r *Rtorrent) Stats() (*stats, error) {
 
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
 	return st, nil
 }
 
@@ -468,12 +485,20 @@ func (r *Rtorrent) getVersion() (string, error) {
 
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
 	return fmt.Sprintf("%s/%s", clientVer, libraryVer), nil
 
 }
 
 // getTrackers takes Torrents and fill their tracker fields.
 func (r *Rtorrent) getTrackers(ts Torrents) error {
+	if len(ts) == 0 {
+		return nil
+	}
+
 	header, body := xmlCon("t.url")
 
 	xml := new(bytes.Buffer)
@@ -495,13 +520,46 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 	defer conn.Close()
 
 	scanner := bufio.NewScanner(conn)
-	for i := 0; scanner.Scan(); {
-		if scanner.Text() == startTAG {
-			scanner.Scan()
-			txt := scanner.Text()
-			ts[i].Tracker, _ = url.Parse(txt[15 : len(txt)-17])
-			i++
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+
+	i := 0
+	for scanner.Scan() {
+		if scanner.Text() != startTAG {
+			continue
 		}
+		if i >= len(ts) {
+			return fmt.Errorf("rtapi: received more trackers than torrents")
+		}
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return err
+			}
+			return fmt.Errorf("rtapi: unexpected tracker response format")
+		}
+		txt := scanner.Text()
+		var trackerStr string
+		switch {
+		case strings.HasPrefix(txt, "<value><string>") && strings.HasSuffix(txt, "</string></value>"):
+			trackerStr = txt[15 : len(txt)-17]
+		case txt == "<value><string/></value>":
+			trackerStr = ""
+		default:
+			return fmt.Errorf("rtapi: invalid tracker response %q", txt)
+		}
+		trackerURL, err := url.Parse(trackerStr)
+		if err != nil {
+			return fmt.Errorf("rtapi: parse tracker url: %w", err)
+		}
+		ts[i].Tracker = trackerURL
+		i++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	if i != len(ts) {
+		return fmt.Errorf("rtapi: received %d trackers for %d torrents", i, len(ts))
 	}
 
 	return nil
@@ -509,16 +567,22 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 
 // calcPercentAndETA takes size, size done, down rate to calculate the percenage + ETA.
 func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
-	var ETA uint64
-	if size == done {
-		return "100%", ETA // Dodge "100.0%"
+	if size == 0 || done >= size {
+		return "100%", 0
 	}
-	percentage := fmt.Sprintf("%.1f%%", float64(done)/float64(size)*100)
 
+	percentage := float64(done) / float64(size) * 100
+	rounded := math.Round(percentage*10) / 10
+	if rounded >= 100 {
+		rounded = 99.9
+	}
+
+	var ETA uint64
 	if downrate > 0 {
 		ETA = (size - done) / downrate
 	}
-	return percentage, ETA
+
+	return fmt.Sprintf("%.1f%%", rounded), ETA
 }
 
 // send takes scgi formated data and returns net.Conn
