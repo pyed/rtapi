@@ -2,16 +2,89 @@ package rtapi
 
 import (
 	"bytes"
+	"encoding/xml"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 )
 
-const testAddress = ":5262"
+const (
+	testAddress       = ":5262"
+	testDownloadURL   = "http://releases.ubuntu.com/17.04/ubuntu-17.04-desktop-amd64.iso.torrent"
+	testDownloadDir   = "/home/Downloads"
+	testDownloadLabel = "Software"
+)
+
+var (
+	downloadReq            = mustBuildDownloadRequest(testDownloadURL)
+	downloadWithOptionsReq = mustBuildDownloadWithOptionsRequest(testDownloadURL, testDownloadDir, testDownloadLabel)
+	torrentsReq            = mustBuildTorrentsRequest()
+	speedsReq              = mustBuildSpeedsRequest()
+	statsReq               = mustBuildStatsRequest()
+	versionReq             = mustBuildVersionRequest()
+)
+
+func mustBuildDownloadRequest(url string) string {
+	req, err := buildDownloadRequest(url)
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustBuildDownloadWithOptionsRequest(link, dir, label string) string {
+	req, err := buildDownloadWithOptionsRequest(link, dir, label)
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustBuildTorrentsRequest() string {
+	req, err := buildTorrentsRequest()
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustBuildSystemMulticallRequest(method string, params ...string) string {
+	req, err := buildSystemMulticallRequest(method, params...)
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustBuildSpeedsRequest() string {
+	req, err := buildSpeedsRequest()
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustBuildStatsRequest() string {
+	req, err := buildStatsRequest()
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustBuildVersionRequest() string {
+	req, err := buildVersionRequest()
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
 
 func TestMain(m *testing.M) {
 	listener, err := net.Listen("tcp", testAddress)
@@ -101,6 +174,447 @@ var testCases = Torrents{
 	},
 }
 
+var (
+	stopReq     = mustBuildSystemMulticallRequest("d.stop", testCases[0].Hash)
+	startReq    = mustBuildSystemMulticallRequest("d.start", testCases[0].Hash)
+	checkReq    = mustBuildSystemMulticallRequest("d.check_hash", testCases[0].Hash)
+	deleteReq   = mustBuildSystemMulticallRequest("d.erase", testCases[0].Hash)
+	trackersReq = mustBuildSystemMulticallRequest(
+		"t.url",
+		testCases[0].Hash+":t0",
+		testCases[1].Hash+":t0",
+		testCases[2].Hash+":t0",
+	)
+)
+
+func TestBuildTorrentsRequest(t *testing.T) {
+	req, err := buildTorrentsRequest()
+	if err != nil {
+		t.Fatalf("buildTorrentsRequest() returned error: %v", err)
+	}
+
+	if !strings.HasPrefix(req, xml.Header) {
+		t.Fatalf("expected XML header prefix in %q", req)
+	}
+
+	var call xmlrpcMethodCall
+	body := strings.TrimPrefix(req, xml.Header)
+	if err := xml.Unmarshal([]byte(body), &call); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	if call.MethodName != "d.multicall2" {
+		t.Fatalf("expected method name d.multicall2, got %s", call.MethodName)
+	}
+
+	expectedFields := []string{
+		"",
+		"main",
+		"d.name=",
+		"d.hash=",
+		"d.down.rate=",
+		"d.up.rate=",
+		"d.size_chunks=",
+		"d.chunk_size=",
+		"d.completed_chunks=",
+		"d.ratio=",
+		"d.load_date=",
+		"d.message=",
+		"d.base_path=",
+		"d.is_active=",
+		"d.connection_current=",
+		"d.complete=",
+		"d.hashing=",
+		"d.custom1=",
+	}
+
+	if len(call.Params) != len(expectedFields) {
+		t.Fatalf("expected %d params, got %d", len(expectedFields), len(call.Params))
+	}
+
+	for i, param := range call.Params {
+		if param.Value.String == nil {
+			t.Fatalf("unexpected nil string param at index %d", i)
+		}
+		if *param.Value.String != expectedFields[i] {
+			t.Fatalf("unexpected param %d: expected %q, got %q", i, expectedFields[i], *param.Value.String)
+		}
+	}
+}
+
+func TestBuildDownloadRequest(t *testing.T) {
+	req, err := buildDownloadRequest(testDownloadURL)
+	if err != nil {
+		t.Fatalf("buildDownloadRequest() returned error: %v", err)
+	}
+
+	if !strings.HasPrefix(req, xml.Header) {
+		t.Fatalf("expected XML header prefix in %q", req)
+	}
+
+	var call xmlrpcMethodCall
+	body := strings.TrimPrefix(req, xml.Header)
+	if err := xml.Unmarshal([]byte(body), &call); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	if call.MethodName != "load.start" {
+		t.Fatalf("expected method name load.start, got %s", call.MethodName)
+	}
+
+	expectedValues := []string{"", testDownloadURL}
+	if len(call.Params) != len(expectedValues) {
+		t.Fatalf("expected %d params, got %d", len(expectedValues), len(call.Params))
+	}
+
+	for i, param := range call.Params {
+		if param.Value.String == nil {
+			t.Fatalf("unexpected nil string param at index %d", i)
+		}
+		if *param.Value.String != expectedValues[i] {
+			t.Fatalf("unexpected param %d: expected %q, got %q", i, expectedValues[i], *param.Value.String)
+		}
+	}
+}
+
+func TestBuildDownloadWithOptionsRequest(t *testing.T) {
+	req, err := buildDownloadWithOptionsRequest(testDownloadURL, testDownloadDir, testDownloadLabel)
+	if err != nil {
+		t.Fatalf("buildDownloadWithOptionsRequest() returned error: %v", err)
+	}
+
+	if !strings.HasPrefix(req, xml.Header) {
+		t.Fatalf("expected XML header prefix in %q", req)
+	}
+
+	var call xmlrpcMethodCall
+	body := strings.TrimPrefix(req, xml.Header)
+	if err := xml.Unmarshal([]byte(body), &call); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	if call.MethodName != "system.multicall" {
+		t.Fatalf("expected method name system.multicall, got %s", call.MethodName)
+	}
+
+	if len(call.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(call.Params))
+	}
+
+	array := call.Params[0].Value.Array
+	if array == nil {
+		t.Fatalf("expected array value in first param")
+	}
+
+	if len(array.Values) != 1 {
+		t.Fatalf("expected array with 1 value, got %d", len(array.Values))
+	}
+
+	callStruct := array.Values[0].Struct
+	if callStruct == nil {
+		t.Fatalf("expected struct value in call array entry")
+	}
+
+	if len(callStruct.Members) != 2 {
+		t.Fatalf("expected 2 struct members, got %d", len(callStruct.Members))
+	}
+
+	methodMember := callStruct.Members[0]
+	if methodMember.Name != "methodName" {
+		t.Fatalf("expected first member name methodName, got %s", methodMember.Name)
+	}
+	if methodMember.Value.String == nil || *methodMember.Value.String != "load.start" {
+		t.Fatalf("expected methodName value load.start, got %#v", methodMember.Value.String)
+	}
+
+	paramsMember := callStruct.Members[1]
+	if paramsMember.Name != "params" {
+		t.Fatalf("expected second member name params, got %s", paramsMember.Name)
+	}
+
+	paramsArray := paramsMember.Value.Array
+	if paramsArray == nil {
+		t.Fatalf("expected params member to contain array value")
+	}
+
+	expectedValues := []string{
+		"",
+		testDownloadURL,
+		fmt.Sprintf("d.directory.set=\"%s\"", testDownloadDir),
+		fmt.Sprintf("d.custom1.set=%s", testDownloadLabel),
+	}
+
+	if len(paramsArray.Values) != len(expectedValues) {
+		t.Fatalf("expected %d params values, got %d", len(expectedValues), len(paramsArray.Values))
+	}
+
+	for i, value := range paramsArray.Values {
+		if value.String == nil {
+			t.Fatalf("unexpected nil string value at index %d", i)
+		}
+		if *value.String != expectedValues[i] {
+			t.Fatalf("unexpected params value %d: expected %q, got %q", i, expectedValues[i], *value.String)
+		}
+	}
+}
+
+func TestBuildSpeedsRequest(t *testing.T) {
+	req, err := buildSpeedsRequest()
+	if err != nil {
+		t.Fatalf("buildSpeedsRequest() returned error: %v", err)
+	}
+
+	if !strings.HasPrefix(req, xml.Header) {
+		t.Fatalf("expected XML header prefix in %q", req)
+	}
+
+	var call xmlrpcMethodCall
+	body := strings.TrimPrefix(req, xml.Header)
+	if err := xml.Unmarshal([]byte(body), &call); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	if call.MethodName != "system.multicall" {
+		t.Fatalf("expected method name system.multicall, got %s", call.MethodName)
+	}
+
+	if len(call.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(call.Params))
+	}
+
+	array := call.Params[0].Value.Array
+	if array == nil {
+		t.Fatalf("expected array value in first param")
+	}
+
+	expected := []struct {
+		method string
+		params []string
+	}{
+		{"throttle.global_down.rate", []string{""}},
+		{"throttle.global_up.rate", []string{""}},
+	}
+
+	if len(array.Values) != len(expected) {
+		t.Fatalf("expected %d method calls, got %d", len(expected), len(array.Values))
+	}
+
+	for i, value := range array.Values {
+		callStruct := value.Struct
+		if callStruct == nil {
+			t.Fatalf("expected struct value at index %d", i)
+		}
+
+		if len(callStruct.Members) != 2 {
+			t.Fatalf("expected 2 struct members at index %d, got %d", i, len(callStruct.Members))
+		}
+
+		methodMember := callStruct.Members[0]
+		if methodMember.Name != "methodName" {
+			t.Fatalf("expected methodName member at index %d, got %s", i, methodMember.Name)
+		}
+		if methodMember.Value.String == nil || *methodMember.Value.String != expected[i].method {
+			t.Fatalf("unexpected method name at index %d: got %#v", i, methodMember.Value.String)
+		}
+
+		paramsMember := callStruct.Members[1]
+		if paramsMember.Name != "params" {
+			t.Fatalf("expected params member at index %d, got %s", i, paramsMember.Name)
+		}
+
+		paramsArray := paramsMember.Value.Array
+		if paramsArray == nil {
+			t.Fatalf("expected params array at index %d", i)
+		}
+
+		if len(paramsArray.Values) != len(expected[i].params) {
+			t.Fatalf("expected %d params at index %d, got %d", len(expected[i].params), i, len(paramsArray.Values))
+		}
+
+		for j, paramValue := range paramsArray.Values {
+			if paramValue.String == nil {
+				t.Fatalf("expected string param at index %d for call %d", j, i)
+			}
+			if *paramValue.String != expected[i].params[j] {
+				t.Fatalf("unexpected param %d for call %d: expected %q, got %q", j, i, expected[i].params[j], *paramValue.String)
+			}
+		}
+	}
+}
+
+func TestBuildStatsRequest(t *testing.T) {
+	req, err := buildStatsRequest()
+	if err != nil {
+		t.Fatalf("buildStatsRequest() returned error: %v", err)
+	}
+
+	if !strings.HasPrefix(req, xml.Header) {
+		t.Fatalf("expected XML header prefix in %q", req)
+	}
+
+	var call xmlrpcMethodCall
+	body := strings.TrimPrefix(req, xml.Header)
+	if err := xml.Unmarshal([]byte(body), &call); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	if call.MethodName != "system.multicall" {
+		t.Fatalf("expected method name system.multicall, got %s", call.MethodName)
+	}
+
+	if len(call.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(call.Params))
+	}
+
+	array := call.Params[0].Value.Array
+	if array == nil {
+		t.Fatalf("expected array value in first param")
+	}
+
+	expected := []struct {
+		method string
+		params []string
+	}{
+		{"throttle.up.max", []string{"", ""}},
+		{"throttle.down.max", []string{"", ""}},
+		{"throttle.global_up.total", nil},
+		{"throttle.global_down.total", nil},
+		{"network.listen.port", nil},
+		{"directory.default", nil},
+	}
+
+	if len(array.Values) != len(expected) {
+		t.Fatalf("expected %d method calls, got %d", len(expected), len(array.Values))
+	}
+
+	for i, value := range array.Values {
+		callStruct := value.Struct
+		if callStruct == nil {
+			t.Fatalf("expected struct value at index %d", i)
+		}
+
+		if len(callStruct.Members) != 2 {
+			t.Fatalf("expected 2 struct members at index %d, got %d", i, len(callStruct.Members))
+		}
+
+		methodMember := callStruct.Members[0]
+		if methodMember.Name != "methodName" {
+			t.Fatalf("expected methodName member at index %d, got %s", i, methodMember.Name)
+		}
+		if methodMember.Value.String == nil || *methodMember.Value.String != expected[i].method {
+			t.Fatalf("unexpected method name at index %d: got %#v", i, methodMember.Value.String)
+		}
+
+		paramsMember := callStruct.Members[1]
+		if paramsMember.Name != "params" {
+			t.Fatalf("expected params member at index %d, got %s", i, paramsMember.Name)
+		}
+
+		paramsArray := paramsMember.Value.Array
+		if paramsArray == nil {
+			t.Fatalf("expected params array at index %d", i)
+		}
+
+		expectedParams := expected[i].params
+		if len(paramsArray.Values) != len(expectedParams) {
+			t.Fatalf("expected %d params at index %d, got %d", len(expectedParams), i, len(paramsArray.Values))
+		}
+
+		for j, paramValue := range paramsArray.Values {
+			if paramValue.String == nil {
+				t.Fatalf("expected string param at index %d for call %d", j, i)
+			}
+			if *paramValue.String != expectedParams[j] {
+				t.Fatalf("unexpected param %d for call %d: expected %q, got %q", j, i, expectedParams[j], *paramValue.String)
+			}
+		}
+	}
+}
+
+func TestBuildVersionRequest(t *testing.T) {
+	req, err := buildVersionRequest()
+	if err != nil {
+		t.Fatalf("buildVersionRequest() returned error: %v", err)
+	}
+
+	if !strings.HasPrefix(req, xml.Header) {
+		t.Fatalf("expected XML header prefix in %q", req)
+	}
+
+	var call xmlrpcMethodCall
+	body := strings.TrimPrefix(req, xml.Header)
+	if err := xml.Unmarshal([]byte(body), &call); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	if call.MethodName != "system.multicall" {
+		t.Fatalf("expected method name system.multicall, got %s", call.MethodName)
+	}
+
+	if len(call.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(call.Params))
+	}
+
+	array := call.Params[0].Value.Array
+	if array == nil {
+		t.Fatalf("expected array value in first param")
+	}
+
+	expected := []struct {
+		method string
+		params []string
+	}{
+		{"system.client_version", []string{""}},
+		{"system.library_version", []string{""}},
+	}
+
+	if len(array.Values) != len(expected) {
+		t.Fatalf("expected %d method calls, got %d", len(expected), len(array.Values))
+	}
+
+	for i, value := range array.Values {
+		callStruct := value.Struct
+		if callStruct == nil {
+			t.Fatalf("expected struct value at index %d", i)
+		}
+
+		if len(callStruct.Members) != 2 {
+			t.Fatalf("expected 2 struct members at index %d, got %d", i, len(callStruct.Members))
+		}
+
+		methodMember := callStruct.Members[0]
+		if methodMember.Name != "methodName" {
+			t.Fatalf("expected methodName member at index %d, got %s", i, methodMember.Name)
+		}
+		if methodMember.Value.String == nil || *methodMember.Value.String != expected[i].method {
+			t.Fatalf("unexpected method name at index %d: got %#v", i, methodMember.Value.String)
+		}
+
+		paramsMember := callStruct.Members[1]
+		if paramsMember.Name != "params" {
+			t.Fatalf("expected params member at index %d, got %s", i, paramsMember.Name)
+		}
+
+		paramsArray := paramsMember.Value.Array
+		if paramsArray == nil {
+			t.Fatalf("expected params array at index %d", i)
+		}
+
+		if len(paramsArray.Values) != len(expected[i].params) {
+			t.Fatalf("expected %d params at index %d, got %d", len(expected[i].params), i, len(paramsArray.Values))
+		}
+
+		for j, paramValue := range paramsArray.Values {
+			if paramValue.String == nil {
+				t.Fatalf("expected string param at index %d for call %d", j, i)
+			}
+			if *paramValue.String != expected[i].params[j] {
+				t.Fatalf("unexpected param %d for call %d: expected %q, got %q", j, i, expected[i].params[j], *paramValue.String)
+			}
+		}
+	}
+}
+
 func TestTorrents(t *testing.T) {
 	torrents, err := rt.Torrents()
 	if err != nil {
@@ -130,7 +644,20 @@ func TestGetTorrent(t *testing.T) {
 }
 
 func TestDownload(t *testing.T) {
-	rt.Download("http://releases.ubuntu.com/17.04/ubuntu-17.04-desktop-amd64.iso.torrent")
+	if err := rt.Download(testDownloadURL); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDownloadWithOptions(t *testing.T) {
+	opts := &DotTorrentWithOptions{
+		Link:  testDownloadURL,
+		Label: testDownloadLabel,
+	}
+
+	if err := rt.DownloadWithOptions(opts); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestStop(t *testing.T) {
@@ -256,6 +783,7 @@ func handleRequest(conn net.Conn) {
 			log.Fatal(err)
 		}
 	case req == downloadReq:
+	case req == downloadWithOptionsReq:
 	case req == stopReq:
 	case req == startReq:
 	case req == checkReq:
@@ -330,67 +858,6 @@ func match(a, b *Torrent) bool {
 }
 
 const (
-	torrentsReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>d.multicall2</methodName>
-<params>
-<param>
-<value><string></string></value>
-</param>
-<param>
-<value><string>main</string></value>
-</param>
-<param>
-<value><string>d.name=</string></value>
-</param>
-<param>
-<value><string>d.hash=</string></value>
-</param>
-<param>
-<value><string>d.down.rate=</string></value>
-</param>
-<param>
-<value><string>d.up.rate=</string></value>
-</param>
-<param>
-<value><string>d.size_chunks=</string></value>
-</param>
-<param>
-<value><string>d.chunk_size=</string></value>
-</param>
-<param>
-<value><string>d.completed_chunks=</string></value>
-</param>
-<param>
-<value><string>d.ratio=</string></value>
-</param>
-<param>
-<value><string>d.load_date=</string></value>
-</param>
-<param>
-<value><string>d.message=</string></value>
-</param>
-<param>
-<value><string>d.base_path=</string></value>
-</param>
-<param>
-<value><string>d.is_active=</string></value>
-</param>
-<param>
-<value><string>d.connection_current=</string></value>
-</param>
-<param>
-<value><string>d.complete=</string></value>
-</param>
-<param>
-<value><string>d.hashing=</string></value>
-</param>
-<param>
-<value><string>d.custom1=</string></value>
-</param>
-</params>
-</methodCall>`
-
 	torrentsResp = `Status: 200 OK
 Content-Type: text/xml
 Content-Length: 2203
@@ -457,248 +924,6 @@ Content-Length: 2203
 </params>
 </methodResponse>`
 
-	downloadReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>load.start</methodName>
-<params>
-<param>
-<value><string></string></value>
-</param>
-<param>
-<value><string>http://releases.ubuntu.com/17.04/ubuntu-17.04-desktop-amd64.iso.torrent</string></value>
-</param>
-</params>
-</methodCall>`
-
-	stopReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>d.stop</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	startReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>d.start</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	checkReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>d.check_hash</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	deleteReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>d.erase</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	trackersReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>t.url</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>1C60CBECF4C632EDC7AB546623454B33A295CCEA:t0</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>t.url</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>8856B93099408AE0EBB8CD7BC7BDB9A7F80AD648:t0</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>t.url</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>02CA77A6A047FD37F04337437D18F82E61861084:t0</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
 	trackersResp = `Status: 200 OK
 Content-Type: text/xml
 Content-Length: 513
@@ -720,65 +945,6 @@ Content-Length: 513
 </params>
 </methodResponse>`
 
-	speedsReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_down.rate</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_up.rate</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
 	speedsResp = `Status: 200 OK
 Content-Type: text/xml
 Content-Length: 315
@@ -796,147 +962,6 @@ Content-Length: 315
 </data></array></value></param>
 </params>
 </methodResponse>`
-
-	statsReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.up.max</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.down.max</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_up.total</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_down.total</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>network.listen.port</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>directory.default</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
 
 	statsResp = `Status: 200 OK
 Content-Type: text/xml
@@ -967,65 +992,6 @@ Content-Length: 635
 </data></array></value></param>
 </params>
 </methodResponse>`
-
-	versionReq = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>system.client_version</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>system.library_version</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
 
 	versionResp = `Status: 200 OK
 Content-Type: text/xml
