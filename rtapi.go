@@ -3,16 +3,14 @@ package rtapi
 // Written for 'pyed/rtelegram'.
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/xml"
 	"fmt"
-	"html"
+	"io"
 	"math"
 	"net"
 	"net/url"
 	"os"
-	"strconv"
-	"strings"
 )
 
 const (
@@ -53,14 +51,23 @@ type xmlrpcMethodCall struct {
 	Params     []xmlrpcParam `xml:"params>param"`
 }
 
+type xmlrpcMethodResponse struct {
+	Params []xmlrpcParam `xml:"params>param"`
+}
+
 type xmlrpcParam struct {
 	Value xmlrpcValue `xml:"value"`
 }
 
 type xmlrpcValue struct {
-	String *string       `xml:"string,omitempty"`
-	Array  *xmlrpcArray  `xml:"array,omitempty"`
-	Struct *xmlrpcStruct `xml:"struct,omitempty"`
+	String  *string       `xml:"string,omitempty"`
+	Array   *xmlrpcArray  `xml:"array,omitempty"`
+	Struct  *xmlrpcStruct `xml:"struct,omitempty"`
+	Int     *int64        `xml:"int,omitempty"`
+	I4      *int64        `xml:"i4,omitempty"`
+	I8      *int64        `xml:"i8,omitempty"`
+	Double  *float64      `xml:"double,omitempty"`
+	Boolean *bool         `xml:"boolean,omitempty"`
 }
 
 type xmlrpcArray struct {
@@ -293,8 +300,97 @@ func marshalMethodCall(request xmlrpcMethodCall) (string, error) {
 	return xml.Header + string(payload), nil
 }
 
-func isArrayDataStart(line string) bool {
-	return strings.HasPrefix(line, "<value><array><data>")
+func decodeMethodResponse(r io.Reader) (*xmlrpcMethodResponse, error) {
+	payload, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: read response: %w", err)
+	}
+
+	start := bytes.IndexByte(payload, '<')
+	if start == -1 {
+		return nil, fmt.Errorf("rtapi: xml response not found")
+	}
+
+	payload = payload[start:]
+
+	var resp xmlrpcMethodResponse
+	if err := xml.Unmarshal(payload, &resp); err != nil {
+		return nil, fmt.Errorf("rtapi: decode xmlrpc response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+func (resp *xmlrpcMethodResponse) arrayParam() ([]xmlrpcValue, error) {
+	if resp == nil || len(resp.Params) == 0 {
+		return nil, fmt.Errorf("rtapi: xmlrpc response missing params")
+	}
+
+	array := resp.Params[0].Value.Array
+	if array == nil {
+		return nil, fmt.Errorf("rtapi: expected array value in response param")
+	}
+
+	return array.Values, nil
+}
+
+func (v xmlrpcValue) arrayValues() ([]xmlrpcValue, error) {
+	if v.Array == nil {
+		return nil, fmt.Errorf("rtapi: expected array value")
+	}
+	return v.Array.Values, nil
+}
+
+func (v xmlrpcValue) firstArrayValue() (xmlrpcValue, error) {
+	values, err := v.arrayValues()
+	if err != nil {
+		return xmlrpcValue{}, err
+	}
+	if len(values) == 0 {
+		return xmlrpcValue{}, fmt.Errorf("rtapi: expected value in array")
+	}
+	return values[0], nil
+}
+
+func (v xmlrpcValue) stringValue() (string, error) {
+	if v.String != nil {
+		return *v.String, nil
+	}
+	return "", fmt.Errorf("rtapi: expected string value")
+}
+
+func (v xmlrpcValue) int64Value() (int64, error) {
+	switch {
+	case v.I8 != nil:
+		return *v.I8, nil
+	case v.I4 != nil:
+		return *v.I4, nil
+	case v.Int != nil:
+		return *v.Int, nil
+	}
+	return 0, fmt.Errorf("rtapi: expected integer value")
+}
+
+func (v xmlrpcValue) uint64Value() (uint64, error) {
+	n, err := v.int64Value()
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("rtapi: expected non-negative integer value")
+	}
+	return uint64(n), nil
+}
+
+func (r *Rtorrent) execute(req string) (*xmlrpcMethodResponse, error) {
+	data := encode(req)
+	conn, err := r.send(data)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	return decodeMethodResponse(conn)
 }
 
 // Torrents returns a slice that contains all the torrents.
@@ -304,116 +400,23 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 		return nil, err
 	}
 
-	data := encode(req)
-	conn, err := r.send(data)
+	resp, err := r.execute(req)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
-	torrents := make(Torrents, 0)
-
-	// Fuck XML. http://foaas.com/XML/Everyone
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 1024), 1024*1024)
-	for scanner.Scan() {
-		if isArrayDataStart(scanner.Text()) {
-			torrent := new(Torrent)
-
-			scanner.Scan()
-			txt := scanner.Text()
-			torrent.Name = html.UnescapeString(txt[15 : len(txt)-17])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Hash = txt[15 : len(txt)-17]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.DownRate = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.UpRate = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dSizeChunks := pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dChunkSize := pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dCompletedChunks := pUint(txt[11 : len(txt)-13])
-
-			torrent.Size = dSizeChunks * dChunkSize
-			torrent.Completed = dCompletedChunks * dChunkSize
-
-			torrent.Percent, torrent.ETA = calcPercentAndETA(torrent.Size, torrent.Completed, torrent.DownRate)
-
-			scanner.Scan()
-			txt = scanner.Text()
-			ratio := pUint(txt[11 : len(txt)-13])
-			torrent.Ratio = round(float64(ratio)/1000, 2)
-
-			torrent.UpTotal = uint64(round(float64(torrent.Completed)*(float64(ratio)/1000), 1))
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Age = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Message = txt[15 : len(txt)-17]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Path = html.UnescapeString(txt[15 : len(txt)-17])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dIsActive := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dConnectionCurrent := txt[15 : len(txt)-17]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dComplete := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dHashing := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Label = txt[15 : len(txt)-17]
-
-			// figure out the State
-			switch {
-			case dIsActive == "1" && len(torrent.Message) != 0:
-				torrent.State = Error
-			case dHashing != "0":
-				torrent.State = Hashing
-			case dIsActive == "1" && dComplete == "1":
-				torrent.State = Seeding
-			case dIsActive == "1" && dConnectionCurrent == "leech":
-				torrent.State = Leeching
-			case dComplete == "1":
-				torrent.State = Complete
-			default: // dIsActive == "0"
-				torrent.State = Stopped
-			}
-
-			torrents = append(torrents, torrent)
-		}
+	values, err := resp.arrayParam()
+	if err != nil {
+		return nil, err
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	torrents := make(Torrents, 0, len(values))
+	for _, torrentValue := range values {
+		torrent, err := parseTorrent(torrentValue)
+		if err != nil {
+			return nil, err
+		}
+		torrents = append(torrents, torrent)
 	}
 
 	// set the Tracker field
@@ -425,6 +428,104 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 		torrents.Sort(CurrentSorting)
 	}
 	return torrents, nil
+}
+
+func parseTorrent(value xmlrpcValue) (*Torrent, error) {
+	fields, err := value.arrayValues()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent: %w", err)
+	}
+
+	const expectedFields = 16
+	if len(fields) < expectedFields {
+		return nil, fmt.Errorf("rtapi: expected %d torrent fields, got %d", expectedFields, len(fields))
+	}
+
+	t := new(Torrent)
+
+	if t.Name, err = fields[0].stringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent name: %w", err)
+	}
+	if t.Hash, err = fields[1].stringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent hash: %w", err)
+	}
+
+	if t.DownRate, err = fields[2].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent down rate: %w", err)
+	}
+	if t.UpRate, err = fields[3].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent up rate: %w", err)
+	}
+
+	sizeChunks, err := fields[4].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent size chunks: %w", err)
+	}
+	chunkSize, err := fields[5].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent chunk size: %w", err)
+	}
+	completedChunks, err := fields[6].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent completed chunks: %w", err)
+	}
+	ratioRaw, err := fields[7].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent ratio: %w", err)
+	}
+
+	t.Size = sizeChunks * chunkSize
+	t.Completed = completedChunks * chunkSize
+	t.Percent, t.ETA = calcPercentAndETA(t.Size, t.Completed, t.DownRate)
+	t.Ratio = round(float64(ratioRaw)/1000, 2)
+	t.UpTotal = uint64(round(float64(t.Completed)*(float64(ratioRaw)/1000), 1))
+
+	if t.Age, err = fields[8].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent age: %w", err)
+	}
+	if t.Message, err = fields[9].stringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent message: %w", err)
+	}
+	if t.Path, err = fields[10].stringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent path: %w", err)
+	}
+
+	isActive, err := fields[11].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent active flag: %w", err)
+	}
+	connectionCurrent, err := fields[12].stringValue()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent connection: %w", err)
+	}
+	complete, err := fields[13].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent complete flag: %w", err)
+	}
+	hashing, err := fields[14].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent hashing flag: %w", err)
+	}
+	if t.Label, err = fields[15].stringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent label: %w", err)
+	}
+
+	switch {
+	case isActive == 1 && len(t.Message) != 0:
+		t.State = Error
+	case hashing != 0:
+		t.State = Hashing
+	case isActive == 1 && complete == 1:
+		t.State = Seeding
+	case isActive == 1 && connectionCurrent == "leech":
+		t.State = Leeching
+	case complete == 1:
+		t.State = Complete
+	default:
+		t.State = Stopped
+	}
+
+	return t, nil
 }
 
 // GetTorrent takes a hash and returns *Torrent
@@ -582,35 +683,39 @@ func (r *Rtorrent) Speeds() (down, up uint64) {
 		return 0, 0
 	}
 
-	data := encode(req)
-	conn, err := r.send(data)
+	resp, err := r.execute(req)
 	if err != nil {
-		down, up = 0, 0
-		return
-	}
-	defer conn.Close()
-
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if isArrayDataStart(scanner.Text()) {
-			scanner.Scan()
-			txt := scanner.Text()
-			down = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			up = pUint(txt[11 : len(txt)-13])
-			return
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		down, up = 0, 0
+		return 0, 0
 	}
 
-	return
+	values, err := resp.arrayParam()
+	if err != nil {
+		return 0, 0
+	}
+
+	if len(values) < 2 {
+		return 0, 0
+	}
+
+	downVal, err := values[0].firstArrayValue()
+	if err != nil {
+		return 0, 0
+	}
+	upVal, err := values[1].firstArrayValue()
+	if err != nil {
+		return 0, 0
+	}
+
+	down, err = downVal.uint64Value()
+	if err != nil {
+		return 0, 0
+	}
+	up, err = upVal.uint64Value()
+	if err != nil {
+		return 0, 0
+	}
+
+	return down, up
 }
 
 type stats struct {
@@ -626,58 +731,67 @@ func (r *Rtorrent) Stats() (*stats, error) {
 		return nil, err
 	}
 
-	data := encode(req)
-	conn, err := r.send(data)
+	resp, err := r.execute(req)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if isArrayDataStart(scanner.Text()) {
-			scanner.Scan()
-			txt := scanner.Text()
-			st.ThrottleUp = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.ThrottleDown = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.TotalUp = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.TotalDown = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.Port = txt[11 : len(txt)-13]
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.Directory = txt[15 : len(txt)-17]
-
-		}
+	values, err := resp.arrayParam()
+	if err != nil {
+		return nil, err
 	}
-	if err := scanner.Err(); err != nil {
+
+	if len(values) < 6 {
+		return nil, fmt.Errorf("rtapi: expected 6 stats values, got %d", len(values))
+	}
+
+	throttleUpVal, err := values[0].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	if st.ThrottleUp, err = throttleUpVal.uint64Value(); err != nil {
+		return nil, err
+	}
+
+	throttleDownVal, err := values[1].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	if st.ThrottleDown, err = throttleDownVal.uint64Value(); err != nil {
+		return nil, err
+	}
+
+	totalUpVal, err := values[2].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	if st.TotalUp, err = totalUpVal.uint64Value(); err != nil {
+		return nil, err
+	}
+
+	totalDownVal, err := values[3].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	if st.TotalDown, err = totalDownVal.uint64Value(); err != nil {
+		return nil, err
+	}
+
+	portVal, err := values[4].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	port, err := portVal.uint64Value()
+	if err != nil {
+		return nil, err
+	}
+	st.Port = fmt.Sprintf("%d", port)
+
+	directoryVal, err := values[5].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	if st.Directory, err = directoryVal.stringValue(); err != nil {
 		return nil, err
 	}
 
@@ -691,33 +805,35 @@ func (r *Rtorrent) getVersion() (string, error) {
 		return "", err
 	}
 
-	data := encode(req)
-	conn, err := r.send(data)
+	resp, err := r.execute(req)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
 
-	var clientVer, libraryVer string
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if isArrayDataStart(scanner.Text()) {
-			scanner.Scan()
-			txt := scanner.Text()
-			clientVer = txt[15 : len(txt)-17]
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			libraryVer = txt[15 : len(txt)-17]
-
-			break
-
-		}
+	values, err := resp.arrayParam()
+	if err != nil {
+		return "", err
 	}
-	if err := scanner.Err(); err != nil {
+
+	if len(values) < 2 {
+		return "", fmt.Errorf("rtapi: expected 2 version values, got %d", len(values))
+	}
+
+	clientVal, err := values[0].firstArrayValue()
+	if err != nil {
+		return "", err
+	}
+	clientVer, err := clientVal.stringValue()
+	if err != nil {
+		return "", err
+	}
+
+	libVal, err := values[1].firstArrayValue()
+	if err != nil {
+		return "", err
+	}
+	libraryVer, err := libVal.stringValue()
+	if err != nil {
 		return "", err
 	}
 
@@ -741,54 +857,39 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 		return err
 	}
 
-	data := encode(req)
-	conn, err := r.send(data)
+	resp, err := r.execute(req)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	values, err := resp.arrayParam()
+	if err != nil {
+		return err
+	}
 
-	i := 0
-	for scanner.Scan() {
-		if !isArrayDataStart(scanner.Text()) {
-			continue
+	if len(values) != len(ts) {
+		return fmt.Errorf("rtapi: received %d trackers for %d torrents", len(values), len(ts))
+	}
+
+	for i, trackerValue := range values {
+		trackerValues, err := trackerValue.arrayValues()
+		if err != nil {
+			return err
 		}
-		if i >= len(ts) {
-			return fmt.Errorf("rtapi: received more trackers than torrents")
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
+
+		var trackerStr string
+		if len(trackerValues) > 0 {
+			trackerStr, err = trackerValues[0].stringValue()
+			if err != nil {
 				return err
 			}
-			return fmt.Errorf("rtapi: unexpected tracker response format")
 		}
-		txt := scanner.Text()
-		var trackerStr string
-		switch {
-		case strings.HasPrefix(txt, "<value><string>") && strings.HasSuffix(txt, "</string></value>"):
-			trackerStr = txt[15 : len(txt)-17]
-		case txt == "<value><string/></value>":
-			trackerStr = ""
-		default:
-			return fmt.Errorf("rtapi: invalid tracker response %q", txt)
-		}
+
 		trackerURL, err := url.Parse(trackerStr)
 		if err != nil {
 			return fmt.Errorf("rtapi: parse tracker url: %w", err)
 		}
 		ts[i].Tracker = trackerURL
-		i++
-	}
-
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	if i != len(ts) {
-		return fmt.Errorf("rtapi: received %d trackers for %d torrents", i, len(ts))
 	}
 
 	return nil
@@ -836,15 +937,6 @@ func encode(data string) []byte {
 	headers = fmt.Sprintf("%d:%s,", len(headers), headers)
 	return []byte(headers + data)
 
-}
-
-// pUint wraps strconv.ParseUint
-func pUint(str string) uint64 {
-	u, err := strconv.ParseUint(str, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return u
 }
 
 // round function.
