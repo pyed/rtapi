@@ -5,12 +5,17 @@ package rtapi
 import (
 	"bufio"
 	"bytes"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"html"
+	"io"
+	"math"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -90,108 +95,124 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 	}
 	defer conn.Close()
 
-	torrents := make(Torrents, 0)
-
-	// Fuck XML. http://foaas.com/XML/Everyone
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if scanner.Text() == startTAG {
-			torrent := new(Torrent)
-
-			scanner.Scan()
-			txt := scanner.Text()
-			torrent.Name = html.UnescapeString(txt[15 : len(txt)-17])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Hash = txt[15 : len(txt)-17]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.DownRate = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.UpRate = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dSizeChunks := pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dChunkSize := pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dCompletedChunks := pUint(txt[11 : len(txt)-13])
-
-			torrent.Size = dSizeChunks * dChunkSize
-			torrent.Completed = dCompletedChunks * dChunkSize
-
-			torrent.Percent, torrent.ETA = calcPercentAndETA(torrent.Size, torrent.Completed, torrent.DownRate)
-
-			scanner.Scan()
-			txt = scanner.Text()
-			ratio := pUint(txt[11 : len(txt)-13])
-			torrent.Ratio = round(float64(ratio)/1000, 2)
-
-			torrent.UpTotal = uint64(round(float64(torrent.Completed)*(float64(ratio)/1000), 1))
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Age = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Message = txt[15 : len(txt)-17]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Path = html.UnescapeString(txt[15 : len(txt)-17])
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dIsActive := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dConnectionCurrent := txt[15 : len(txt)-17]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dComplete := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			dHashing := txt[11 : len(txt)-13]
-
-			scanner.Scan()
-			txt = scanner.Text()
-			torrent.Label = txt[15 : len(txt)-17]
-
-			// figure out the State
-			switch {
-			case dIsActive == "1" && len(torrent.Message) != 0:
-				torrent.State = Error
-			case dHashing != "0":
-				torrent.State = Hashing
-			case dIsActive == "1" && dComplete == "1":
-				torrent.State = Seeding
-			case dIsActive == "1" && dConnectionCurrent == "leech":
-				torrent.State = Leeching
-			case dComplete == "1":
-				torrent.State = Complete
-			default: // dIsActive == "0"
-				torrent.State = Stopped
-			}
-
-			torrents = append(torrents, torrent)
-		}
+	body, err := readXMLBody(conn)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := parseMulticall(body)
+	if err != nil {
+		return nil, err
 	}
 
-	// set the Tracker field
-	r.getTrackers(torrents)
+	torrents := make(Torrents, 0, len(rows))
+	for _, row := range rows {
+		if len(row) != 16 {
+			return nil, fmt.Errorf("rtapi: expected 16 torrent fields, got %d", len(row))
+		}
+
+		name, err := row[0].StringValue()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent name: %w", err)
+		}
+		hash, err := row[1].StringValue()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent hash: %w", err)
+		}
+		downRate, err := row[2].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent down rate: %w", err)
+		}
+		upRate, err := row[3].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent up rate: %w", err)
+		}
+		sizeChunks, err := row[4].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent size chunks: %w", err)
+		}
+		chunkSize, err := row[5].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent chunk size: %w", err)
+		}
+		completedChunks, err := row[6].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent completed chunks: %w", err)
+		}
+		ratioRaw, err := row[7].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent ratio: %w", err)
+		}
+		age, err := row[8].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent age: %w", err)
+		}
+		message, err := row[9].StringValue()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent message: %w", err)
+		}
+		path, err := row[10].StringValue()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent path: %w", err)
+		}
+		isActive, err := row[11].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent active flag: %w", err)
+		}
+		connectionCurrent, err := row[12].StringValue()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent connection state: %w", err)
+		}
+		complete, err := row[13].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent complete flag: %w", err)
+		}
+		hashing, err := row[14].Uint64Value()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent hashing flag: %w", err)
+		}
+		label, err := row[15].StringValue()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent label: %w", err)
+		}
+
+		torrent := &Torrent{
+			Name:      html.UnescapeString(name),
+			Hash:      hash,
+			DownRate:  downRate,
+			UpRate:    upRate,
+			Size:      sizeChunks * chunkSize,
+			Completed: completedChunks * chunkSize,
+			Age:       age,
+			Message:   message,
+			Path:      html.UnescapeString(path),
+			Label:     html.UnescapeString(label),
+		}
+
+		torrent.Percent, torrent.ETA = calcPercentAndETA(torrent.Size, torrent.Completed, torrent.DownRate)
+		torrent.Ratio = round(float64(ratioRaw)/1000, 2)
+		torrent.UpTotal = uint64(round(float64(torrent.Completed)*(float64(ratioRaw)/1000), 1))
+
+		switch {
+		case isActive == 1 && len(torrent.Message) != 0:
+			torrent.State = Error
+		case hashing != 0:
+			torrent.State = Hashing
+		case isActive == 1 && complete == 1:
+			torrent.State = Seeding
+		case isActive == 1 && connectionCurrent == "leech":
+			torrent.State = Leeching
+		case complete == 1:
+			torrent.State = Complete
+		default:
+			torrent.State = Stopped
+		}
+
+		torrents = append(torrents, torrent)
+	}
+
+	if err := r.getTrackers(torrents); err != nil {
+		return nil, err
+	}
 
 	if CurrentSorting != DefaultSorting { // torrents are already sorted by ID
 		torrents.Sort(CurrentSorting)
@@ -359,20 +380,24 @@ func (r *Rtorrent) Speeds() (down, up uint64) {
 	}
 	defer conn.Close()
 
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if scanner.Text() == startTAG {
-			scanner.Scan()
-			txt := scanner.Text()
-			down = pUint(txt[11 : len(txt)-13])
+	body, err := readXMLBody(conn)
+	if err != nil {
+		return
+	}
 
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
+	values, err := parseScalarMulticall(body)
+	if err != nil {
+		return
+	}
 
-			scanner.Scan()
-			txt = scanner.Text()
-			up = pUint(txt[11 : len(txt)-13])
-			return
+	if len(values) > 0 {
+		if v, err := values[0].Uint64Value(); err == nil {
+			down = v
+		}
+	}
+	if len(values) > 1 {
+		if v, err := values[1].Uint64Value(); err == nil {
+			up = v
 		}
 	}
 	return
@@ -393,50 +418,41 @@ func (r *Rtorrent) Stats() (*stats, error) {
 	}
 	defer conn.Close()
 
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if scanner.Text() == startTAG {
-			scanner.Scan()
-			txt := scanner.Text()
-			st.ThrottleUp = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.ThrottleDown = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.TotalUp = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.TotalDown = pUint(txt[11 : len(txt)-13])
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.Port = txt[11 : len(txt)-13]
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			st.Directory = txt[15 : len(txt)-17]
-
-		}
+	body, err := readXMLBody(conn)
+	if err != nil {
+		return nil, err
 	}
+
+	values, err := parseScalarMulticall(body)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(values) != 6 {
+		return nil, fmt.Errorf("rtapi: expected 6 stats values, got %d", len(values))
+	}
+
+	if st.ThrottleUp, err = values[0].Uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse throttle up: %w", err)
+	}
+	if st.ThrottleDown, err = values[1].Uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse throttle down: %w", err)
+	}
+	if st.TotalUp, err = values[2].Uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse total up: %w", err)
+	}
+	if st.TotalDown, err = values[3].Uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse total down: %w", err)
+	}
+	portVal, err := values[4].Uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse port: %w", err)
+	}
+	st.Port = strconv.FormatUint(portVal, 10)
+	if st.Directory, err = values[5].StringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse directory: %w", err)
+	}
+
 	return st, nil
 }
 
@@ -449,31 +465,38 @@ func (r *Rtorrent) getVersion() (string, error) {
 	}
 	defer conn.Close()
 
-	var clientVer, libraryVer string
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		if scanner.Text() == startTAG {
-			scanner.Scan()
-			txt := scanner.Text()
-			clientVer = txt[15 : len(txt)-17]
-
-			scanner.Scan() // </data></array></value>
-			scanner.Scan() // <value><array><data>
-
-			scanner.Scan()
-			txt = scanner.Text()
-			libraryVer = txt[15 : len(txt)-17]
-
-			break
-
-		}
+	body, err := readXMLBody(conn)
+	if err != nil {
+		return "", err
 	}
+
+	values, err := parseScalarMulticall(body)
+	if err != nil {
+		return "", err
+	}
+	if len(values) < 2 {
+		return "", fmt.Errorf("rtapi: expected 2 version values, got %d", len(values))
+	}
+
+	clientVer, err := values[0].StringValue()
+	if err != nil {
+		return "", fmt.Errorf("rtapi: parse client version: %w", err)
+	}
+	libraryVer, err := values[1].StringValue()
+	if err != nil {
+		return "", fmt.Errorf("rtapi: parse library version: %w", err)
+	}
+
 	return fmt.Sprintf("%s/%s", clientVer, libraryVer), nil
 
 }
 
 // getTrackers takes Torrents and fill their tracker fields.
 func (r *Rtorrent) getTrackers(ts Torrents) error {
+	if len(ts) == 0 {
+		return nil
+	}
+
 	header, body := xmlCon("t.url")
 
 	xml := new(bytes.Buffer)
@@ -494,31 +517,266 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 	}
 	defer conn.Close()
 
-	scanner := bufio.NewScanner(conn)
-	for i := 0; scanner.Scan(); {
-		if scanner.Text() == startTAG {
-			scanner.Scan()
-			txt := scanner.Text()
-			ts[i].Tracker, _ = url.Parse(txt[15 : len(txt)-17])
-			i++
+	respBody, err := readXMLBody(conn)
+	if err != nil {
+		return err
+	}
+
+	rows, err := parseMulticall(respBody)
+	if err != nil {
+		return err
+	}
+	if len(rows) != len(ts) {
+		return fmt.Errorf("rtapi: received %d trackers for %d torrents", len(rows), len(ts))
+	}
+
+	for i, row := range rows {
+		if len(row) == 0 {
+			return fmt.Errorf("rtapi: empty tracker response for torrent %d", i)
 		}
+		trackerStr, err := row[0].StringValue()
+		if err != nil {
+			return fmt.Errorf("rtapi: parse tracker string: %w", err)
+		}
+		trackerURL, err := url.Parse(trackerStr)
+		if err != nil {
+			return fmt.Errorf("rtapi: parse tracker url: %w", err)
+		}
+		ts[i].Tracker = trackerURL
 	}
 
 	return nil
 }
 
+func parseMulticall(data []byte) ([][]xmlValue, error) {
+	var resp xmlResponse
+	if err := xml.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("rtapi: decode xml response: %w", err)
+	}
+	if len(resp.Params) == 0 {
+		return nil, fmt.Errorf("rtapi: xmlrpc response missing params")
+	}
+
+	outer, err := resp.Params[0].Value.ArrayValues()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: expected array response: %w", err)
+	}
+
+	rows := make([][]xmlValue, len(outer))
+	for i, val := range outer {
+		inner, err := val.ArrayValues()
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: expected array entry at index %d: %w", i, err)
+		}
+		rows[i] = inner
+	}
+
+	return rows, nil
+}
+
+func parseScalarMulticall(data []byte) ([]xmlValue, error) {
+	rows, err := parseMulticall(data)
+	if err != nil {
+		return nil, err
+	}
+
+	values := make([]xmlValue, len(rows))
+	for i, row := range rows {
+		if len(row) == 0 {
+			return nil, fmt.Errorf("rtapi: empty response row %d", i)
+		}
+		values[i] = row[0]
+	}
+
+	return values, nil
+}
+
+func readXMLBody(r io.Reader) ([]byte, error) {
+	br := bufio.NewReader(r)
+
+	for {
+		b, err := br.Peek(1)
+		if err != nil {
+			return nil, err
+		}
+		switch b[0] {
+		case '<':
+			return io.ReadAll(br)
+		case ' ', '\t', '\r', '\n':
+			if _, err := br.ReadByte(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		break
+	}
+
+	headers := make(map[string]string)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		if sep := strings.Index(line, ":"); sep >= 0 {
+			key := strings.ToLower(strings.TrimSpace(line[:sep]))
+			value := strings.TrimSpace(line[sep+1:])
+			headers[key] = value
+		}
+	}
+
+	if lengthStr, ok := headers["content-length"]; ok {
+		length, err := strconv.Atoi(lengthStr)
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: invalid content length %q: %w", lengthStr, err)
+		}
+		body := make([]byte, length)
+		n, err := io.ReadFull(br, body)
+		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		result := body[:n]
+		if n == len(body) {
+			rest, readErr := io.ReadAll(br)
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				return nil, readErr
+			}
+			if len(rest) > 0 {
+				result = append(result, rest...)
+			}
+		}
+		return result, nil
+	}
+
+	return io.ReadAll(br)
+}
+
+type xmlResponse struct {
+	Params []xmlParam `xml:"params>param"`
+}
+
+type xmlParam struct {
+	Value xmlValue `xml:"value"`
+}
+
+type xmlArray struct {
+	Values []xmlValue `xml:"data>value"`
+}
+
+type xmlValue struct {
+	Array   *xmlArray  `xml:"array"`
+	String  *xmlScalar `xml:"string"`
+	Int     *xmlScalar `xml:"int"`
+	I4      *xmlScalar `xml:"i4"`
+	I8      *xmlScalar `xml:"i8"`
+	Double  *xmlScalar `xml:"double"`
+	Boolean *xmlScalar `xml:"boolean"`
+}
+
+func (v xmlValue) ArrayValues() ([]xmlValue, error) {
+	if v.Array == nil {
+		return nil, fmt.Errorf("rtapi: value is not an array")
+	}
+	return v.Array.Values, nil
+}
+
+func (v xmlValue) StringValue() (string, error) {
+	if v.String == nil {
+		return "", fmt.Errorf("rtapi: value is not a string")
+	}
+	return v.String.Text(), nil
+}
+
+func (v xmlValue) Int64Value() (int64, error) {
+	switch {
+	case v.I8 != nil:
+		return v.I8.Int64Value()
+	case v.I4 != nil:
+		return v.I4.Int64Value()
+	case v.Int != nil:
+		return v.Int.Int64Value()
+	case v.Boolean != nil:
+		b, err := v.Boolean.BoolValue()
+		if err != nil {
+			return 0, err
+		}
+		if b {
+			return 1, nil
+		}
+		return 0, nil
+	case v.String != nil:
+		return v.String.Int64Value()
+	}
+	return 0, fmt.Errorf("rtapi: value is not an integer")
+}
+
+func (v xmlValue) Uint64Value() (uint64, error) {
+	i, err := v.Int64Value()
+	if err != nil {
+		return 0, err
+	}
+	if i < 0 {
+		return 0, fmt.Errorf("rtapi: negative value %d", i)
+	}
+	return uint64(i), nil
+}
+
+type xmlScalar struct {
+	Raw string `xml:",chardata"`
+}
+
+func (s *xmlScalar) Text() string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.Raw)
+}
+
+func (s *xmlScalar) Int64Value() (int64, error) {
+	if s == nil {
+		return 0, fmt.Errorf("rtapi: empty integer value")
+	}
+	if s.Text() == "" {
+		return 0, nil
+	}
+	return strconv.ParseInt(s.Text(), 10, 64)
+}
+
+func (s *xmlScalar) BoolValue() (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("rtapi: empty boolean value")
+	}
+	switch strings.TrimSpace(s.Raw) {
+	case "", "0", "false":
+		return false, nil
+	case "1", "true":
+		return true, nil
+	default:
+		return false, fmt.Errorf("rtapi: invalid boolean %q", s.Raw)
+	}
+}
+
 // calcPercentAndETA takes size, size done, down rate to calculate the percenage + ETA.
 func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
-	var ETA uint64
-	if size == done {
-		return "100%", ETA // Dodge "100.0%"
+	if size == 0 || done >= size {
+		return "100%", 0
 	}
-	percentage := fmt.Sprintf("%.1f%%", float64(done)/float64(size)*100)
 
+	percentage := float64(done) / float64(size) * 100
+	rounded := math.Round(percentage*10) / 10
+	if rounded >= 100 {
+		rounded = 99.9
+	}
+
+	var ETA uint64
 	if downrate > 0 {
 		ETA = (size - done) / downrate
 	}
-	return percentage, ETA
+
+	return fmt.Sprintf("%.1f%%", rounded), ETA
 }
 
 // send takes scgi formated data and returns net.Conn
@@ -543,15 +801,6 @@ func encode(data string) []byte {
 	headers = fmt.Sprintf("%d:%s,", len(headers), headers)
 	return []byte(headers + data)
 
-}
-
-// pUint wraps strconv.ParseUint
-func pUint(str string) uint64 {
-	u, err := strconv.ParseUint(str, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return u
 }
 
 // round function.
@@ -1013,6 +1262,4 @@ const (
 </param>
 </params>
 </methodCall>`
-
-	startTAG = "<value><array><data>"
 )
