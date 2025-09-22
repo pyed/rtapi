@@ -4,7 +4,7 @@ package rtapi
 
 import (
 	"bufio"
-	"bytes"
+	"encoding/xml"
 	"fmt"
 	"html"
 	"math"
@@ -47,6 +47,72 @@ type Torrent struct {
 // Torrents is a slice of *Torrent.
 type Torrents []*Torrent
 
+type xmlrpcMethodCall struct {
+	XMLName    xml.Name      `xml:"methodCall"`
+	MethodName string        `xml:"methodName"`
+	Params     []xmlrpcParam `xml:"params>param"`
+}
+
+type xmlrpcParam struct {
+	Value xmlrpcValue `xml:"value"`
+}
+
+type xmlrpcValue struct {
+	String *string       `xml:"string,omitempty"`
+	Array  *xmlrpcArray  `xml:"array,omitempty"`
+	Struct *xmlrpcStruct `xml:"struct,omitempty"`
+}
+
+type xmlrpcArray struct {
+	Values []xmlrpcValue `xml:"data>value"`
+}
+
+type xmlrpcStruct struct {
+	Members []xmlrpcMember `xml:"member"`
+}
+
+type xmlrpcMember struct {
+	Name  string      `xml:"name"`
+	Value xmlrpcValue `xml:"value"`
+}
+
+func newStringParam(val string) xmlrpcParam {
+	return xmlrpcParam{Value: newStringValue(val)}
+}
+
+func newStringValue(val string) xmlrpcValue {
+	v := val
+	return xmlrpcValue{String: &v}
+}
+
+func newArrayValue(values ...xmlrpcValue) xmlrpcValue {
+	return xmlrpcValue{Array: &xmlrpcArray{Values: values}}
+}
+
+func newStructValue(members ...xmlrpcMember) xmlrpcValue {
+	return xmlrpcValue{Struct: &xmlrpcStruct{Members: members}}
+}
+
+func newStringMember(name, val string) xmlrpcMember {
+	return xmlrpcMember{Name: name, Value: newStringValue(val)}
+}
+
+func newArrayMember(name string, values ...xmlrpcValue) xmlrpcMember {
+	return xmlrpcMember{Name: name, Value: newArrayValue(values...)}
+}
+
+func newMethodCall(method string, params ...string) xmlrpcValue {
+	values := make([]xmlrpcValue, 0, len(params))
+	for _, param := range params {
+		values = append(values, newStringValue(param))
+	}
+
+	return newStructValue(
+		newStringMember("methodName", method),
+		newArrayMember("params", values...),
+	)
+}
+
 // DotTorrentWithOptions is used when adding .torrent file with options.        ;
 // the options get passed via the "Caption" when sending a file via telegram ;
 // telegram, e.g d=/dir/to/downloads l=Software, will save the added torrent ;
@@ -83,9 +149,162 @@ func NewRtorrent(address string) (*Rtorrent, error) {
 	return rt, nil
 }
 
+func buildTorrentsRequest() (string, error) {
+	fields := []string{
+		"",
+		"main",
+		"d.name=",
+		"d.hash=",
+		"d.down.rate=",
+		"d.up.rate=",
+		"d.size_chunks=",
+		"d.chunk_size=",
+		"d.completed_chunks=",
+		"d.ratio=",
+		"d.load_date=",
+		"d.message=",
+		"d.base_path=",
+		"d.is_active=",
+		"d.connection_current=",
+		"d.complete=",
+		"d.hashing=",
+		"d.custom1=",
+	}
+
+	params := make([]xmlrpcParam, 0, len(fields))
+	for _, field := range fields {
+		params = append(params, newStringParam(field))
+	}
+
+	request := xmlrpcMethodCall{
+		MethodName: "d.multicall2",
+		Params:     params,
+	}
+
+	return marshalMethodCall(request)
+}
+
+func buildDownloadRequest(link string) (string, error) {
+	request := xmlrpcMethodCall{
+		MethodName: "load.start",
+		Params: []xmlrpcParam{
+			newStringParam(""),
+			newStringParam(link),
+		},
+	}
+
+	return marshalMethodCall(request)
+}
+
+func buildDownloadWithOptionsRequest(link, dir, label string) (string, error) {
+	directory := fmt.Sprintf("d.directory.set=\"%s\"", dir)
+	customLabel := fmt.Sprintf("d.custom1.set=%s", label)
+
+	request := xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params: []xmlrpcParam{
+			{
+				Value: newArrayValue(
+					newMethodCall("load.start", "", link, directory, customLabel),
+				),
+			},
+		},
+	}
+
+	return marshalMethodCall(request)
+}
+
+func buildSystemMulticallRequest(method string, params ...string) (string, error) {
+	calls := make([]xmlrpcValue, 0, len(params))
+	for _, param := range params {
+		calls = append(calls, newMethodCall(method, param))
+	}
+
+	request := xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params: []xmlrpcParam{
+			{
+				Value: newArrayValue(calls...),
+			},
+		},
+	}
+
+	return marshalMethodCall(request)
+}
+
+func buildSpeedsRequest() (string, error) {
+	request := xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params: []xmlrpcParam{
+			{
+				Value: newArrayValue(
+					newMethodCall("throttle.global_down.rate", ""),
+					newMethodCall("throttle.global_up.rate", ""),
+				),
+			},
+		},
+	}
+
+	return marshalMethodCall(request)
+}
+
+func buildStatsRequest() (string, error) {
+	request := xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params: []xmlrpcParam{
+			{
+				Value: newArrayValue(
+					newMethodCall("throttle.up.max", "", ""),
+					newMethodCall("throttle.down.max", "", ""),
+					newMethodCall("throttle.global_up.total"),
+					newMethodCall("throttle.global_down.total"),
+					newMethodCall("network.listen.port"),
+					newMethodCall("directory.default"),
+				),
+			},
+		},
+	}
+
+	return marshalMethodCall(request)
+}
+
+func buildVersionRequest() (string, error) {
+	request := xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params: []xmlrpcParam{
+			{
+				Value: newArrayValue(
+					newMethodCall("system.client_version", ""),
+					newMethodCall("system.library_version", ""),
+				),
+			},
+		},
+	}
+
+	return marshalMethodCall(request)
+}
+
+func marshalMethodCall(request xmlrpcMethodCall) (string, error) {
+	payload, err := xml.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+
+	return xml.Header + string(payload), nil
+}
+
+func isArrayDataStart(line string) bool {
+	return strings.HasPrefix(line, "<value><array><data>")
+}
+
 // Torrents returns a slice that contains all the torrents.
 func (r *Rtorrent) Torrents() (Torrents, error) {
-	data := encode(torrentsXML)
+	req, err := buildTorrentsRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return nil, err
@@ -98,7 +317,7 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
 	for scanner.Scan() {
-		if scanner.Text() == startTAG {
+		if isArrayDataStart(scanner.Text()) {
 			torrent := new(Torrent)
 
 			scanner.Scan()
@@ -225,7 +444,12 @@ func (r *Rtorrent) GetTorrent(hash string) (*Torrent, error) {
 
 // Download takes URL to a .torrent file to start downloading it.
 func (r *Rtorrent) Download(url string) error {
-	data := encode(fmt.Sprintf(downloadXML, url))
+	req, err := buildDownloadRequest(url)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -244,7 +468,12 @@ func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
 		}
 		tFile.Dir = stats.Directory
 	}
-	data := encode(fmt.Sprintf(donwloadXMLwithOptions, tFile.Link, tFile.Dir, tFile.Label))
+	req, err := buildDownloadWithOptionsRequest(tFile.Link, tFile.Dir, tFile.Label)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -255,20 +484,17 @@ func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
 
 // Stop takes a *Torrent or more to 'd.stop' it/them.
 func (r *Rtorrent) Stop(ts ...*Torrent) error {
-	header, body := xmlCon("d.stop")
-
-	xml := new(bytes.Buffer)
-	xml.WriteString(header)
-
+	hashes := make([]string, len(ts))
 	for i := range ts {
-		xml.WriteString(ts[i].Hash)
-		if i != len(ts)-1 {
-			xml.WriteString(body)
-		}
+		hashes[i] = ts[i].Hash
 	}
-	xml.WriteString(footer)
 
-	data := encode(xml.String())
+	req, err := buildSystemMulticallRequest("d.stop", hashes...)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -279,20 +505,17 @@ func (r *Rtorrent) Stop(ts ...*Torrent) error {
 
 // Start takes a *Torrent or more to 'd.start' it/them.
 func (r *Rtorrent) Start(ts ...*Torrent) error {
-	header, body := xmlCon("d.start")
-
-	xml := new(bytes.Buffer)
-	xml.WriteString(header)
-
+	hashes := make([]string, len(ts))
 	for i := range ts {
-		xml.WriteString(ts[i].Hash)
-		if i != len(ts)-1 {
-			xml.WriteString(body)
-		}
+		hashes[i] = ts[i].Hash
 	}
-	xml.WriteString(footer)
 
-	data := encode(xml.String())
+	req, err := buildSystemMulticallRequest("d.start", hashes...)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -303,20 +526,17 @@ func (r *Rtorrent) Start(ts ...*Torrent) error {
 
 // Check takes a *Torrent or more to 'd.check_hash' it/them.
 func (r *Rtorrent) Check(ts ...*Torrent) error {
-	header, body := xmlCon("d.check_hash")
-
-	xml := new(bytes.Buffer)
-	xml.WriteString(header)
-
+	hashes := make([]string, len(ts))
 	for i := range ts {
-		xml.WriteString(ts[i].Hash)
-		if i != len(ts)-1 {
-			xml.WriteString(body)
-		}
+		hashes[i] = ts[i].Hash
 	}
-	xml.WriteString(footer)
 
-	data := encode(xml.String())
+	req, err := buildSystemMulticallRequest("d.check_hash", hashes...)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -327,20 +547,17 @@ func (r *Rtorrent) Check(ts ...*Torrent) error {
 
 // Delete takes *Torrent or more to 'd.erase' it/them, if withData is true, local data will get deleted too.
 func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
-	header, body := xmlCon("d.erase")
-
-	xml := new(bytes.Buffer)
-	xml.WriteString(header)
-
+	hashes := make([]string, len(ts))
 	for i := range ts {
-		xml.WriteString(ts[i].Hash)
-		if i != len(ts)-1 {
-			xml.WriteString(body)
-		}
+		hashes[i] = ts[i].Hash
 	}
-	xml.WriteString(footer)
 
-	data := encode(xml.String())
+	req, err := buildSystemMulticallRequest("d.erase", hashes...)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -360,7 +577,12 @@ func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
 
 // Speeds returns current Down/Up rates.
 func (r *Rtorrent) Speeds() (down, up uint64) {
-	data := encode(speedsXML)
+	req, err := buildSpeedsRequest()
+	if err != nil {
+		return 0, 0
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		down, up = 0, 0
@@ -370,7 +592,7 @@ func (r *Rtorrent) Speeds() (down, up uint64) {
 
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
-		if scanner.Text() == startTAG {
+		if isArrayDataStart(scanner.Text()) {
 			scanner.Scan()
 			txt := scanner.Text()
 			down = pUint(txt[11 : len(txt)-13])
@@ -399,7 +621,12 @@ type stats struct {
 // Stats returns *stats filled with the proper info.
 func (r *Rtorrent) Stats() (*stats, error) {
 	st := new(stats)
-	data := encode(statsXML)
+	req, err := buildStatsRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return nil, err
@@ -408,7 +635,7 @@ func (r *Rtorrent) Stats() (*stats, error) {
 
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
-		if scanner.Text() == startTAG {
+		if isArrayDataStart(scanner.Text()) {
 			scanner.Scan()
 			txt := scanner.Text()
 			st.ThrottleUp = pUint(txt[11 : len(txt)-13])
@@ -459,7 +686,12 @@ func (r *Rtorrent) Stats() (*stats, error) {
 
 // getVersion returns a string represnts rtorrent/libtorrent versions.
 func (r *Rtorrent) getVersion() (string, error) {
-	data := encode(versionXML)
+	req, err := buildVersionRequest()
+	if err != nil {
+		return "", err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return "", err
@@ -469,7 +701,7 @@ func (r *Rtorrent) getVersion() (string, error) {
 	var clientVer, libraryVer string
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
-		if scanner.Text() == startTAG {
+		if isArrayDataStart(scanner.Text()) {
 			scanner.Scan()
 			txt := scanner.Text()
 			clientVer = txt[15 : len(txt)-17]
@@ -499,20 +731,17 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 		return nil
 	}
 
-	header, body := xmlCon("t.url")
-
-	xml := new(bytes.Buffer)
-	xml.WriteString(header)
-
+	keys := make([]string, len(ts))
 	for i := range ts {
-		xml.WriteString(ts[i].Hash + ":t0")
-		if i != len(ts)-1 {
-			xml.WriteString(body)
-		}
+		keys[i] = ts[i].Hash + ":t0"
 	}
-	xml.WriteString(footer)
 
-	data := encode(xml.String())
+	req, err := buildSystemMulticallRequest("t.url", keys...)
+	if err != nil {
+		return err
+	}
+
+	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
 		return err
@@ -524,7 +753,7 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 
 	i := 0
 	for scanner.Scan() {
-		if scanner.Text() != startTAG {
+		if !isArrayDataStart(scanner.Text()) {
 			continue
 		}
 		if i >= len(ts) {
@@ -626,457 +855,3 @@ func round(v float64, decimals int) float64 {
 	}
 	return float64(int((v*pow)+0.5)) / pow
 }
-
-// xmlCon takes a method name and constructs a header, body, for that method with 'system.multicall'
-func xmlCon(method string) (h string, b string) {
-	h = fmt.Sprintf(header, method)
-	b = fmt.Sprintf(body, method)
-	return
-}
-
-// XML constants
-const (
-	torrentsXML = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>d.multicall2</methodName>
-<params>
-<param>
-<value><string></string></value>
-</param>
-<param>
-<value><string>main</string></value>
-</param>
-<param>
-<value><string>d.name=</string></value>
-</param>
-<param>
-<value><string>d.hash=</string></value>
-</param>
-<param>
-<value><string>d.down.rate=</string></value>
-</param>
-<param>
-<value><string>d.up.rate=</string></value>
-</param>
-<param>
-<value><string>d.size_chunks=</string></value>
-</param>
-<param>
-<value><string>d.chunk_size=</string></value>
-</param>
-<param>
-<value><string>d.completed_chunks=</string></value>
-</param>
-<param>
-<value><string>d.ratio=</string></value>
-</param>
-<param>
-<value><string>d.load_date=</string></value>
-</param>
-<param>
-<value><string>d.message=</string></value>
-</param>
-<param>
-<value><string>d.base_path=</string></value>
-</param>
-<param>
-<value><string>d.is_active=</string></value>
-</param>
-<param>
-<value><string>d.connection_current=</string></value>
-</param>
-<param>
-<value><string>d.complete=</string></value>
-</param>
-<param>
-<value><string>d.hashing=</string></value>
-</param>
-<param>
-<value><string>d.custom1=</string></value>
-</param>
-</params>
-</methodCall>`
-
-	downloadXML = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>load.start</methodName>
-<params>
-<param>
-<value><string></string></value>
-</param>
-<param>
-<value><string>%s</string></value>
-</param>
-</params>
-</methodCall>`
-
-	donwloadXMLwithOptions = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>load.start</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-<value>
-<string>%s</string>
-</value>
-<value>
-<string>d.directory.set="%s"</string>
-</value>
-<value>
-<string>d.custom1.set=%s</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	header = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>%s</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>`
-
-	body = `</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>%s</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string>`
-
-	footer = `</string>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	speedsXML = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_down.rate</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_up.rate</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	statsXML = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.up.max</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.down.max</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_up.total</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>throttle.global_down.total</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>network.listen.port</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>directory.default</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	versionXML = `<?xml version="1.0" encoding="UTF-8"?>
-<methodCall>
-<methodName>system.multicall</methodName>
-<params>
-<param>
-<value>
-<array>
-<data>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>system.client_version</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-<value>
-<struct>
-<member>
-<name>methodName</name>
-<value>
-<string>system.library_version</string>
-</value>
-</member>
-<member>
-<name>params</name>
-<value>
-<array>
-<data>
-<value>
-<string/>
-</value>
-</data>
-</array>
-</value>
-</member>
-</struct>
-</value>
-</data>
-</array>
-</value>
-</param>
-</params>
-</methodCall>`
-
-	startTAG = "<value><array><data>"
-)
