@@ -4,14 +4,31 @@ package rtapi
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
+
+const (
+	// DefaultTimeout bounds each connection, request, and response lifecycle.
+	DefaultTimeout = 30 * time.Second
+	// DefaultMaxResponseSize bounds one SCGI response while allowing callers
+	// with unusually large libraries to choose a larger explicit limit.
+	DefaultMaxResponseSize int64 = 16 << 20
+)
+
+// ErrUnsafeDataDelete is returned because torrent paths belong to the rTorrent
+// host and must never be deleted from the API client's filesystem.
+var ErrUnsafeDataDelete = errors.New("rtapi: deleting torrent data is unsafe; delete it on the explicitly authorized rTorrent host")
 
 const (
 	Leeching = "Leeching"
@@ -39,7 +56,7 @@ type Torrent struct {
 	Message   string
 	Tracker   *url.URL
 	Path      string
-	Label     string // ruTorrent lables
+	Label     string // ruTorrent label
 }
 
 // Torrents is a slice of *Torrent.
@@ -52,7 +69,13 @@ type xmlrpcMethodCall struct {
 }
 
 type xmlrpcMethodResponse struct {
-	Params []xmlrpcParam `xml:"params>param"`
+	XMLName xml.Name         `xml:"methodResponse"`
+	Params  []xmlrpcParam    `xml:"params>param"`
+	Fault   *xmlrpcFaultBody `xml:"fault"`
+}
+
+type xmlrpcFaultBody struct {
+	Value xmlrpcValue `xml:"value"`
 }
 
 type xmlrpcParam struct {
@@ -61,6 +84,7 @@ type xmlrpcParam struct {
 
 type xmlrpcValue struct {
 	String  *string       `xml:"string,omitempty"`
+	Base64  *string       `xml:"base64,omitempty"`
 	Array   *xmlrpcArray  `xml:"array,omitempty"`
 	Struct  *xmlrpcStruct `xml:"struct,omitempty"`
 	Int     *int64        `xml:"int,omitempty"`
@@ -68,6 +92,7 @@ type xmlrpcValue struct {
 	I8      *int64        `xml:"i8,omitempty"`
 	Double  *float64      `xml:"double,omitempty"`
 	Boolean *bool         `xml:"boolean,omitempty"`
+	Text    string        `xml:",chardata"`
 }
 
 type xmlrpcArray struct {
@@ -85,6 +110,11 @@ type xmlrpcMember struct {
 
 func newStringParam(val string) xmlrpcParam {
 	return xmlrpcParam{Value: newStringValue(val)}
+}
+
+func newBase64Param(val []byte) xmlrpcParam {
+	v := base64.StdEncoding.EncodeToString(val)
+	return xmlrpcParam{Value: xmlrpcValue{Base64: &v}}
 }
 
 func newStringValue(val string) xmlrpcValue {
@@ -120,11 +150,8 @@ func newMethodCall(method string, params ...string) xmlrpcValue {
 	)
 }
 
-// DotTorrentWithOptions is used when adding .torrent file with options.        ;
-// the options get passed via the "Caption" when sending a file via telegram ;
-// telegram, e.g d=/dir/to/downloads l=Software, will save the added torrent ;
-// torrent to the specified direcotry, and will assigne the label "Software" ;
-// to it, labels are saved to "d.custom1", which is used by ruTorrent.       ;
+// DotTorrentWithOptions controls the directory and ruTorrent label used when
+// loading a torrent. Link is used by DownloadWithOptions; Name is caller metadata.
 type DotTorrentWithOptions struct {
 	Link  string
 	Name  string
@@ -134,18 +161,32 @@ type DotTorrentWithOptions struct {
 
 // Rtorrent holds the network and address e.g.'tcp|localhost:5000' or 'unix|path/to/socket'.
 type Rtorrent struct {
-	network, address, Version string
+	network, address string
+	Version          string
+	// Timeout bounds dialing, writing, and reading. Non-positive values use DefaultTimeout.
+	Timeout time.Duration
+	// MaxResponseSize bounds response bytes. Non-positive values use DefaultMaxResponseSize.
+	MaxResponseSize int64
 }
 
 // NewRtorrent takes the address, defined in .rtorrent.rc
 func NewRtorrent(address string) (*Rtorrent, error) {
+	if strings.TrimSpace(address) == "" {
+		return nil, fmt.Errorf("rtapi: address must not be empty")
+	}
+
 	network := "tcp"
 
 	if _, err := os.Stat(address); err == nil {
 		network = "unix"
 	}
 
-	rt := &Rtorrent{network: network, address: address}
+	rt := &Rtorrent{
+		network:         network,
+		address:         address,
+		Timeout:         DefaultTimeout,
+		MaxResponseSize: DefaultMaxResponseSize,
+	}
 
 	ver, err := rt.getVersion()
 	if err != nil {
@@ -164,10 +205,10 @@ func buildTorrentsRequest() (string, error) {
 		"d.hash=",
 		"d.down.rate=",
 		"d.up.rate=",
-		"d.size_chunks=",
-		"d.chunk_size=",
-		"d.completed_chunks=",
+		"d.size_bytes=",
+		"d.completed_bytes=",
 		"d.ratio=",
+		"d.up.total=",
 		"d.load_date=",
 		"d.message=",
 		"d.base_path=",
@@ -204,8 +245,8 @@ func buildDownloadRequest(link string) (string, error) {
 }
 
 func buildDownloadWithOptionsRequest(link, dir, label string) (string, error) {
-	directory := fmt.Sprintf("d.directory.set=\"%s\"", dir)
-	customLabel := fmt.Sprintf("d.custom1.set=%s", label)
+	directory := "d.directory.set=" + strconv.Quote(dir)
+	customLabel := "d.custom1.set=" + strconv.Quote(label)
 
 	request := xmlrpcMethodCall{
 		MethodName: "system.multicall",
@@ -219,6 +260,21 @@ func buildDownloadWithOptionsRequest(link, dir, label string) (string, error) {
 	}
 
 	return marshalMethodCall(request)
+}
+
+func buildDownloadRawRequest(data []byte, dir, label string, withOptions bool) (string, error) {
+	params := []xmlrpcParam{newStringParam(""), newBase64Param(data)}
+	if withOptions {
+		params = append(params,
+			newStringParam("d.directory.set="+strconv.Quote(dir)),
+			newStringParam("d.custom1.set="+strconv.Quote(label)),
+		)
+	}
+
+	return marshalMethodCall(xmlrpcMethodCall{
+		MethodName: "load.raw_start",
+		Params:     params,
+	})
 }
 
 func buildSystemMulticallRequest(method string, params ...string) (string, error) {
@@ -300,25 +356,91 @@ func marshalMethodCall(request xmlrpcMethodCall) (string, error) {
 	return xml.Header + string(payload), nil
 }
 
-func decodeMethodResponse(r io.Reader) (*xmlrpcMethodResponse, error) {
-	payload, err := io.ReadAll(r)
+func decodeMethodResponse(r io.Reader, limit int64) (*xmlrpcMethodResponse, error) {
+	if limit <= 0 {
+		limit = DefaultMaxResponseSize
+	}
+	readLimit := limit
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	payload, err := io.ReadAll(io.LimitReader(r, readLimit))
 	if err != nil {
 		return nil, fmt.Errorf("rtapi: read response: %w", err)
 	}
+	if int64(len(payload)) > limit {
+		return nil, fmt.Errorf("rtapi: response exceeds %d bytes", limit)
+	}
 
-	start := bytes.IndexByte(payload, '<')
+	start := bytes.Index(payload, []byte("<methodResponse"))
 	if start == -1 {
-		return nil, fmt.Errorf("rtapi: xml response not found")
+		return nil, fmt.Errorf("rtapi: XML-RPC methodResponse not found")
 	}
 
 	payload = payload[start:]
 
 	var resp xmlrpcMethodResponse
 	if err := xml.Unmarshal(payload, &resp); err != nil {
-		return nil, fmt.Errorf("rtapi: decode xmlrpc response: %w", err)
+		return nil, fmt.Errorf("rtapi: decode XML-RPC response: %w", err)
+	}
+	if resp.Fault != nil {
+		fault, ok, err := faultFromValue(resp.Fault.Value)
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: decode XML-RPC fault: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("rtapi: malformed XML-RPC fault")
+		}
+		return nil, fault
+	}
+	if len(resp.Params) == 0 {
+		return nil, fmt.Errorf("rtapi: XML-RPC response missing params")
 	}
 
 	return &resp, nil
+}
+
+// XMLRPCFault is an error returned by rTorrent.
+type XMLRPCFault struct {
+	Code    int64
+	Message string
+}
+
+func (f *XMLRPCFault) Error() string {
+	return fmt.Sprintf("rtapi: XML-RPC faultCode %d: faultString %q", f.Code, f.Message)
+}
+
+func faultFromValue(v xmlrpcValue) (*XMLRPCFault, bool, error) {
+	if v.Struct == nil {
+		return nil, false, nil
+	}
+
+	var fault XMLRPCFault
+	var hasCode, hasMessage bool
+	for _, member := range v.Struct.Members {
+		switch member.Name {
+		case "faultCode":
+			code, err := member.Value.int64Value()
+			if err != nil {
+				return nil, true, fmt.Errorf("faultCode: %w", err)
+			}
+			fault.Code, hasCode = code, true
+		case "faultString":
+			message, err := member.Value.stringValue()
+			if err != nil {
+				return nil, true, fmt.Errorf("faultString: %w", err)
+			}
+			fault.Message, hasMessage = message, true
+		}
+	}
+
+	if !hasCode && !hasMessage {
+		return nil, false, nil
+	}
+	if !hasCode || !hasMessage {
+		return nil, true, fmt.Errorf("fault is missing faultCode or faultString")
+	}
+	return &fault, true, nil
 }
 
 func (resp *xmlrpcMethodResponse) arrayParam() ([]xmlrpcValue, error) {
@@ -356,6 +478,10 @@ func (v xmlrpcValue) stringValue() (string, error) {
 	if v.String != nil {
 		return *v.String, nil
 	}
+	if v.Base64 == nil && v.Array == nil && v.Struct == nil && v.Int == nil &&
+		v.I4 == nil && v.I8 == nil && v.Double == nil && v.Boolean == nil {
+		return v.Text, nil
+	}
 	return "", fmt.Errorf("rtapi: expected string value")
 }
 
@@ -386,11 +512,35 @@ func (r *Rtorrent) execute(req string) (*xmlrpcMethodResponse, error) {
 	data := encode(req)
 	conn, err := r.send(data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rtapi: send request: %w", err)
 	}
 	defer conn.Close()
 
-	return decodeMethodResponse(conn)
+	return decodeMethodResponse(conn, r.MaxResponseSize)
+}
+
+func (r *Rtorrent) executeMulticall(req string, expected int) (*xmlrpcMethodResponse, error) {
+	resp, err := r.execute(req)
+	if err != nil {
+		return nil, err
+	}
+	values, err := resp.arrayParam()
+	if err != nil {
+		return nil, err
+	}
+	for i, value := range values {
+		fault, ok, err := faultFromValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: decode XML-RPC multicall item %d: %w", i, err)
+		}
+		if ok {
+			return nil, fmt.Errorf("rtapi: XML-RPC multicall item %d: %w", i, fault)
+		}
+	}
+	if len(values) != expected {
+		return nil, fmt.Errorf("rtapi: expected %d XML-RPC multicall results, got %d", expected, len(values))
+	}
+	return resp, nil
 }
 
 // Torrents returns a slice that contains all the torrents.
@@ -424,9 +574,6 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 		return nil, err
 	}
 
-	if CurrentSorting != DefaultSorting { // torrents are already sorted by ID
-		torrents.Sort(CurrentSorting)
-	}
 	return torrents, nil
 }
 
@@ -457,28 +604,21 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 		return nil, fmt.Errorf("rtapi: parse torrent up rate: %w", err)
 	}
 
-	sizeChunks, err := fields[4].uint64Value()
-	if err != nil {
-		return nil, fmt.Errorf("rtapi: parse torrent size chunks: %w", err)
+	if t.Size, err = fields[4].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent size: %w", err)
 	}
-	chunkSize, err := fields[5].uint64Value()
-	if err != nil {
-		return nil, fmt.Errorf("rtapi: parse torrent chunk size: %w", err)
+	if t.Completed, err = fields[5].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent completed bytes: %w", err)
 	}
-	completedChunks, err := fields[6].uint64Value()
-	if err != nil {
-		return nil, fmt.Errorf("rtapi: parse torrent completed chunks: %w", err)
-	}
-	ratioRaw, err := fields[7].uint64Value()
+	ratioRaw, err := fields[6].uint64Value()
 	if err != nil {
 		return nil, fmt.Errorf("rtapi: parse torrent ratio: %w", err)
 	}
-
-	t.Size = sizeChunks * chunkSize
-	t.Completed = completedChunks * chunkSize
+	if t.UpTotal, err = fields[7].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent uploaded bytes: %w", err)
+	}
 	t.Percent, t.ETA = calcPercentAndETA(t.Size, t.Completed, t.DownRate)
-	t.Ratio = round(float64(ratioRaw)/1000, 2)
-	t.UpTotal = uint64(round(float64(t.Completed)*(float64(ratioRaw)/1000), 1))
+	t.Ratio = math.Round(float64(ratioRaw)/10) / 100
 
 	if t.Age, err = fields[8].uint64Value(); err != nil {
 		return nil, fmt.Errorf("rtapi: parse torrent age: %w", err)
@@ -530,6 +670,9 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 
 // GetTorrent takes a hash and returns *Torrent
 func (r *Rtorrent) GetTorrent(hash string) (*Torrent, error) {
+	if strings.TrimSpace(hash) == "" {
+		return nil, fmt.Errorf("rtapi: torrent hash must not be empty")
+	}
 	torrents, err := r.Torrents()
 	if err != nil {
 		return nil, err
@@ -540,198 +683,206 @@ func (r *Rtorrent) GetTorrent(hash string) (*Torrent, error) {
 			return torrents[i], nil
 		}
 	}
-	return nil, fmt.Errorf("Error: No torrent with hash: %s", hash)
+	return nil, fmt.Errorf("rtapi: no torrent with hash %q", hash)
 }
 
 // Download takes URL to a .torrent file to start downloading it.
 func (r *Rtorrent) Download(url string) error {
+	if strings.TrimSpace(url) == "" {
+		return fmt.Errorf("rtapi: download URL must not be empty")
+	}
 	req, err := buildDownloadRequest(url)
 	if err != nil {
-		return err
+		return fmt.Errorf("rtapi: build download request: %w", err)
 	}
-
-	data := encode(req)
-	conn, err := r.send(data)
-	if err != nil {
-		return err
+	if _, err := r.execute(req); err != nil {
+		return fmt.Errorf("rtapi: download: %w", err)
 	}
-	conn.Close()
 	return nil
 }
 
 // DownloadWithOptions takes *DotTorrentWithOptions downloading it.
 func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
-	// if tFile.Dir is empty, set to default
-	if tFile.Dir == "" {
-		stats, err := r.Stats()
-		if err != nil {
-			return err
-		}
-		tFile.Dir = stats.Directory
+	if tFile == nil {
+		return fmt.Errorf("rtapi: torrent options must not be nil")
 	}
-	req, err := buildDownloadWithOptionsRequest(tFile.Link, tFile.Dir, tFile.Label)
-	if err != nil {
-		return err
+	if strings.TrimSpace(tFile.Link) == "" {
+		return fmt.Errorf("rtapi: download URL must not be empty")
 	}
 
-	data := encode(req)
-	conn, err := r.send(data)
+	dir := tFile.Dir
+	if dir == "" {
+		stats, err := r.Stats()
+		if err != nil {
+			return fmt.Errorf("rtapi: resolve default download directory: %w", err)
+		}
+		dir = stats.Directory
+	}
+	req, err := buildDownloadWithOptionsRequest(tFile.Link, dir, tFile.Label)
+	if err != nil {
+		return fmt.Errorf("rtapi: build download request: %w", err)
+	}
+	if _, err := r.executeMulticall(req, 1); err != nil {
+		return fmt.Errorf("rtapi: download with options: %w", err)
+	}
+	return nil
+}
+
+// DownloadRaw loads torrent metadata without requiring rTorrent to fetch a URL.
+func (r *Rtorrent) DownloadRaw(data []byte, options *DotTorrentWithOptions) error {
+	if len(data) == 0 {
+		return fmt.Errorf("rtapi: torrent data must not be empty")
+	}
+
+	var dir, label string
+	if options != nil {
+		dir, label = options.Dir, options.Label
+		if dir == "" {
+			stats, err := r.Stats()
+			if err != nil {
+				return fmt.Errorf("rtapi: resolve default download directory: %w", err)
+			}
+			dir = stats.Directory
+		}
+	}
+
+	req, err := buildDownloadRawRequest(data, dir, label, options != nil)
+	if err != nil {
+		return fmt.Errorf("rtapi: build raw download request: %w", err)
+	}
+	if _, err := r.execute(req); err != nil {
+		return fmt.Errorf("rtapi: raw download: %w", err)
+	}
+	return nil
+}
+
+func torrentHashes(ts []*Torrent) ([]string, error) {
+	hashes := make([]string, len(ts))
+	for i, torrent := range ts {
+		if torrent == nil {
+			return nil, fmt.Errorf("rtapi: torrent %d must not be nil", i)
+		}
+		if strings.TrimSpace(torrent.Hash) == "" {
+			return nil, fmt.Errorf("rtapi: torrent %d hash must not be empty", i)
+		}
+		hashes[i] = torrent.Hash
+	}
+	return hashes, nil
+}
+
+func (r *Rtorrent) mutate(method string, ts ...*Torrent) error {
+	hashes, err := torrentHashes(ts)
 	if err != nil {
 		return err
 	}
-	conn.Close()
+	if len(hashes) == 0 {
+		return nil
+	}
+	req, err := buildSystemMulticallRequest(method, hashes...)
+	if err != nil {
+		return fmt.Errorf("rtapi: build %s request: %w", method, err)
+	}
+	if _, err := r.executeMulticall(req, len(hashes)); err != nil {
+		return fmt.Errorf("rtapi: %s: %w", method, err)
+	}
 	return nil
 }
 
 // Stop takes a *Torrent or more to 'd.stop' it/them.
 func (r *Rtorrent) Stop(ts ...*Torrent) error {
-	hashes := make([]string, len(ts))
-	for i := range ts {
-		hashes[i] = ts[i].Hash
-	}
-
-	req, err := buildSystemMulticallRequest("d.stop", hashes...)
-	if err != nil {
-		return err
-	}
-
-	data := encode(req)
-	conn, err := r.send(data)
-	if err != nil {
-		return err
-	}
-	conn.Close()
-	return nil
+	return r.mutate("d.stop", ts...)
 }
 
 // Start takes a *Torrent or more to 'd.start' it/them.
 func (r *Rtorrent) Start(ts ...*Torrent) error {
-	hashes := make([]string, len(ts))
-	for i := range ts {
-		hashes[i] = ts[i].Hash
-	}
-
-	req, err := buildSystemMulticallRequest("d.start", hashes...)
-	if err != nil {
-		return err
-	}
-
-	data := encode(req)
-	conn, err := r.send(data)
-	if err != nil {
-		return err
-	}
-	conn.Close()
-	return nil
+	return r.mutate("d.start", ts...)
 }
 
 // Check takes a *Torrent or more to 'd.check_hash' it/them.
 func (r *Rtorrent) Check(ts ...*Torrent) error {
-	hashes := make([]string, len(ts))
-	for i := range ts {
-		hashes[i] = ts[i].Hash
-	}
-
-	req, err := buildSystemMulticallRequest("d.check_hash", hashes...)
-	if err != nil {
-		return err
-	}
-
-	data := encode(req)
-	conn, err := r.send(data)
-	if err != nil {
-		return err
-	}
-	conn.Close()
-	return nil
+	return r.mutate("d.check_hash", ts...)
 }
 
-// Delete takes *Torrent or more to 'd.erase' it/them, if withData is true, local data will get deleted too.
+// DeleteMetadata removes torrent metadata from rTorrent after validating the
+// XML-RPC acknowledgement.
+func (r *Rtorrent) DeleteMetadata(ts ...*Torrent) error {
+	return r.mutate("d.erase", ts...)
+}
+
+// Delete removes torrents from rTorrent. Data deletion is deliberately rejected;
+// callers must enforce filesystem ownership and containment on the rTorrent host.
+// Deprecated: use DeleteMetadata to erase metadata explicitly.
 func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
-	hashes := make([]string, len(ts))
-	for i := range ts {
-		hashes[i] = ts[i].Hash
-	}
-
-	req, err := buildSystemMulticallRequest("d.erase", hashes...)
-	if err != nil {
-		return err
-	}
-
-	data := encode(req)
-	conn, err := r.send(data)
-	if err != nil {
-		return err
-	}
-	conn.Close()
-
 	if withData {
-		for i := range ts {
-			if e := os.RemoveAll(ts[i].Path); e != nil {
-				err = e
-			}
-		}
+		return ErrUnsafeDataDelete
 	}
-
-	return err
+	return r.DeleteMetadata(ts...)
 }
 
-// Speeds returns current Down/Up rates.
-func (r *Rtorrent) Speeds() (down, up uint64) {
+// SpeedsWithError returns current Down/Up rates and preserves transport and RPC failures.
+func (r *Rtorrent) SpeedsWithError() (down, up uint64, err error) {
 	req, err := buildSpeedsRequest()
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: build speeds request: %w", err)
 	}
 
-	resp, err := r.execute(req)
+	resp, err := r.executeMulticall(req, 2)
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: get speeds: %w", err)
 	}
 
 	values, err := resp.arrayParam()
 	if err != nil {
-		return 0, 0
+		return 0, 0, err
 	}
 
 	if len(values) < 2 {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: expected 2 speed values, got %d", len(values))
 	}
 
 	downVal, err := values[0].firstArrayValue()
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: parse download speed: %w", err)
 	}
 	upVal, err := values[1].firstArrayValue()
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: parse upload speed: %w", err)
 	}
 
 	down, err = downVal.uint64Value()
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: parse download speed: %w", err)
 	}
 	up, err = upVal.uint64Value()
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("rtapi: parse upload speed: %w", err)
 	}
 
+	return down, up, nil
+}
+
+// Speeds returns current Down/Up rates.
+// Deprecated: use SpeedsWithError so failures are not confused with idle rates.
+func (r *Rtorrent) Speeds() (down, up uint64) {
+	down, up, _ = r.SpeedsWithError()
 	return down, up
 }
 
-type stats struct {
+// Stats describes rTorrent's aggregate transfer and listener state.
+type Stats struct {
 	ThrottleUp, ThrottleDown, TotalUp, TotalDown uint64
 	Port, Directory                              string
 }
 
-// Stats returns *stats filled with the proper info.
-func (r *Rtorrent) Stats() (*stats, error) {
-	st := new(stats)
+// Stats returns aggregate rTorrent information.
+func (r *Rtorrent) Stats() (*Stats, error) {
+	st := new(Stats)
 	req, err := buildStatsRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := r.execute(req)
+	resp, err := r.executeMulticall(req, 6)
 	if err != nil {
 		return nil, err
 	}
@@ -805,7 +956,7 @@ func (r *Rtorrent) getVersion() (string, error) {
 		return "", err
 	}
 
-	resp, err := r.execute(req)
+	resp, err := r.executeMulticall(req, 2)
 	if err != nil {
 		return "", err
 	}
@@ -857,6 +1008,8 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 		return err
 	}
 
+	// Trackerless torrents can return a per-call missing-target fault for t.url.
+	// Handle that expected absence locally while preserving every other fault.
 	resp, err := r.execute(req)
 	if err != nil {
 		return err
@@ -872,6 +1025,19 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 	}
 
 	for i, trackerValue := range values {
+		if fault, ok, err := faultFromValue(trackerValue); err != nil {
+			return fmt.Errorf("rtapi: decode tracker %d fault: %w", i, err)
+		} else if ok {
+			message := strings.ToLower(fault.Message)
+			missing := fault.Code == -501 &&
+				(strings.Contains(message, "info-hash") ||
+					strings.Contains(message, "could not find tracker") || strings.Contains(message, "no tracker"))
+			if missing {
+				continue
+			}
+			return fmt.Errorf("rtapi: get tracker %d: %w", i, fault)
+		}
+
 		trackerValues, err := trackerValue.arrayValues()
 		if err != nil {
 			return err
@@ -885,6 +1051,9 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 			}
 		}
 
+		if trackerStr == "" {
+			continue
+		}
 		trackerURL, err := url.Parse(trackerStr)
 		if err != nil {
 			return fmt.Errorf("rtapi: parse tracker url: %w", err)
@@ -909,7 +1078,11 @@ func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
 
 	var ETA uint64
 	if downrate > 0 {
-		ETA = (size - done) / downrate
+		remaining := size - done
+		ETA = remaining / downrate
+		if remaining%downrate != 0 {
+			ETA++
+		}
 	}
 
 	return fmt.Sprintf("%.1f%%", rounded), ETA
@@ -917,18 +1090,53 @@ func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
 
 // send takes scgi formated data and returns net.Conn
 func (r *Rtorrent) send(data []byte) (net.Conn, error) {
-	conn, err := net.Dial(r.network, r.address)
-	if err != nil {
-		return nil, err
+	if r == nil {
+		return nil, fmt.Errorf("nil rTorrent client")
+	}
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
 	}
 
-	_, err = conn.Write(data)
+	conn, err := (&net.Dialer{Timeout: timeout}).Dial(r.network, r.address)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s %q: %w", r.network, r.address, err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("set connection deadline: %w", err)
+	}
+
+	written, err := writeAll(conn, data)
 	if err != nil {
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("write SCGI request after %d of %d bytes: %w", written, len(data), err)
+	}
+	if written != len(data) {
+		conn.Close()
+		return nil, fmt.Errorf("write SCGI request: wrote %d of %d bytes", written, len(data))
 	}
 
 	return conn, nil
+}
+
+func writeAll(w io.Writer, data []byte) (int, error) {
+	written := 0
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n < 0 || n > len(data) {
+			return written, fmt.Errorf("invalid write count %d", n)
+		}
+		written += n
+		data = data[n:]
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			return written, io.ErrNoProgress
+		}
+	}
+	return written, nil
 }
 
 // encode puts the data in scgi format.
@@ -936,14 +1144,4 @@ func encode(data string) []byte {
 	headers := fmt.Sprintf("CONTENT_LENGTH%c%d%cSCGI%c1%c", 0, len(data), 0, 0, 0)
 	headers = fmt.Sprintf("%d:%s,", len(headers), headers)
 	return []byte(headers + data)
-
-}
-
-// round function.
-func round(v float64, decimals int) float64 {
-	var pow float64 = 1
-	for i := 0; i < decimals; i++ {
-		pow *= 10
-	}
-	return float64(int((v*pow)+0.5)) / pow
 }

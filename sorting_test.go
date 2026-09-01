@@ -85,3 +85,30 @@ func TestSorting(t *testing.T) {
 	}
 
 }
+
+func TestReverseSorting(t *testing.T) {
+	tests := []struct {
+		sorting Sorting
+		first   string
+	}{
+		{ByNameRev, "Ubuntu"},
+		{ByDownRateRev, "Archlinux"},
+		{ByUpRateRev, "Debian"},
+		{BySizeRev, "Ubuntu"},
+		{ByRatioRev, "Archlinux"},
+		{ByAgeRev, "Archlinux"},
+		{ByUpTotalRev, "Archlinux"},
+	}
+
+	for _, test := range tests {
+		torrents := Torrents{
+			{Name: "Debian", DownRate: 9, UpRate: 79, Size: 1024, Ratio: 2.3, Age: 1492021111, UpTotal: 93413},
+			{Name: "Ubuntu", DownRate: 33, UpRate: 19, Size: 4048, Ratio: 0.3, Age: 1492929111, UpTotal: 993413},
+			{Name: "Archlinux", DownRate: 3300, UpRate: 1, Size: 448, Ratio: 9.3, Age: 1492929977, UpTotal: 9176445},
+		}
+		torrents.Sort(test.sorting)
+		if torrents[0].Name != test.first {
+			t.Errorf("Sort(%d) first = %q, want %q", test.sorting, torrents[0].Name, test.first)
+		}
+	}
+}

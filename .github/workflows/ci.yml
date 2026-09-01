@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  verify:
+    name: Go ${{ matrix.go }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.26.7", "1.27.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Verify module
+        run: |
+          go mod tidy -diff
+          go mod verify
+      - name: Test, vet, and build
+        run: |
+          go test -count=1 ./...
+          go vet ./...
+          go build ./...
+      - name: Race detector
+        if: matrix.go == '1.26.7'
+        run: go test -race -count=1 ./...
+      - name: 32-bit tests
+        if: matrix.go == '1.26.7'
+        run: GOARCH=386 CGO_ENABLED=0 go test -count=1 ./...
+      - name: Vulnerability scan
+        if: matrix.go == '1.26.7'
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          repo-checkout: false
+          go-version-input: "1.26.7"
+          go-package: ./...
