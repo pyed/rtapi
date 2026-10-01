@@ -75,6 +75,10 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   compatibility shim that cannot distinguish failure from zero traffic.
 - `DownloadRaw` loads torrent bytes directly, avoiding credential-bearing
   intermediary URLs. `DownloadWithOptions` remains available for URL loading.
+  Set `DotTorrentWithOptions.Stopped` to load a torrent without starting it. An
+  empty `Dir` or `Label` leaves rTorrent's default. URL loads use rTorrent's
+  verbose load commands, so rTorrent logs why a link failed to load.
+- `GetTorrent` requests only the one torrent rather than listing them all.
 - `Torrents.Sort` takes an explicit `rtapi.Sorting` value. The unsafe
   process-global `CurrentSorting` variable was removed; call `Sort` on each
   returned value instead.

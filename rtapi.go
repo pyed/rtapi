@@ -157,13 +157,15 @@ func newMethodCall(method string, params ...string) xmlrpcValue {
 	)
 }
 
-// DotTorrentWithOptions controls the directory and ruTorrent label used when
-// loading a torrent. Link is used by DownloadWithOptions; Name is caller metadata.
+// DotTorrentWithOptions controls how a torrent is loaded. An empty Dir or
+// Label leaves rTorrent's default, and Stopped loads the torrent without
+// starting it. Link is used by DownloadWithOptions; Name is caller metadata.
 type DotTorrentWithOptions struct {
-	Link  string
-	Name  string
-	Dir   string
-	Label string
+	Link    string
+	Name    string
+	Dir     string
+	Label   string
+	Stopped bool
 }
 
 // Rtorrent is a client for one rTorrent instance, reached over SCGI (a Unix
@@ -262,49 +264,17 @@ func buildTorrentsRequest() (string, error) {
 	return marshalMethodCall(request)
 }
 
-func buildDownloadRequest(link string) (string, error) {
-	request := xmlrpcMethodCall{
-		MethodName: "load.start",
-		Params: []xmlrpcParam{
-			newStringParam(""),
-			newStringParam(link),
-		},
+// buildLoadRequest builds a load call for source, followed by the commands
+// that set the new torrent's directory and label when they are given.
+func buildLoadRequest(method string, source xmlrpcParam, dir, label string) (string, error) {
+	params := []xmlrpcParam{newStringParam(""), source}
+	if dir != "" {
+		params = append(params, newStringParam("d.directory.set="+strconv.Quote(dir)))
 	}
-
-	return marshalMethodCall(request)
-}
-
-func buildDownloadWithOptionsRequest(link, dir, label string) (string, error) {
-	directory := "d.directory.set=" + strconv.Quote(dir)
-	customLabel := "d.custom1.set=" + strconv.Quote(label)
-
-	request := xmlrpcMethodCall{
-		MethodName: "system.multicall",
-		Params: []xmlrpcParam{
-			{
-				Value: newArrayValue(
-					newMethodCall("load.start", "", link, directory, customLabel),
-				),
-			},
-		},
+	if label != "" {
+		params = append(params, newStringParam("d.custom1.set="+strconv.Quote(label)))
 	}
-
-	return marshalMethodCall(request)
-}
-
-func buildDownloadRawRequest(data []byte, dir, label string, withOptions bool) (string, error) {
-	params := []xmlrpcParam{newStringParam(""), newBase64Param(data)}
-	if withOptions {
-		params = append(params,
-			newStringParam("d.directory.set="+strconv.Quote(dir)),
-			newStringParam("d.custom1.set="+strconv.Quote(label)),
-		)
-	}
-
-	return marshalMethodCall(xmlrpcMethodCall{
-		MethodName: "load.raw_start",
-		Params:     params,
-	})
+	return marshalMethodCall(xmlrpcMethodCall{MethodName: method, Params: params})
 }
 
 func buildSystemMulticallRequest(method string, params ...string) (string, error) {
@@ -813,17 +783,7 @@ func (r *Rtorrent) Download(url string) error {
 
 // DownloadContext is Download with a context.
 func (r *Rtorrent) DownloadContext(ctx context.Context, url string) error {
-	if strings.TrimSpace(url) == "" {
-		return fmt.Errorf("rtapi: download URL must not be empty")
-	}
-	req, err := buildDownloadRequest(url)
-	if err != nil {
-		return fmt.Errorf("rtapi: build download request: %w", err)
-	}
-	if _, err := r.execute(ctx, req); err != nil {
-		return fmt.Errorf("rtapi: download: %w", err)
-	}
-	return nil
+	return r.DownloadWithOptionsContext(ctx, &DotTorrentWithOptions{Link: url})
 }
 
 // DownloadWithOptions takes *DotTorrentWithOptions downloading it.
@@ -840,20 +800,17 @@ func (r *Rtorrent) DownloadWithOptionsContext(ctx context.Context, tFile *DotTor
 		return fmt.Errorf("rtapi: download URL must not be empty")
 	}
 
-	dir := tFile.Dir
-	if dir == "" {
-		stats, err := r.StatsContext(ctx)
-		if err != nil {
-			return fmt.Errorf("rtapi: resolve default download directory: %w", err)
-		}
-		dir = stats.Directory
+	// The verbose loads make rTorrent log why a link failed to load.
+	method := "load.start_verbose"
+	if tFile.Stopped {
+		method = "load.verbose"
 	}
-	req, err := buildDownloadWithOptionsRequest(tFile.Link, dir, tFile.Label)
+	req, err := buildLoadRequest(method, newStringParam(tFile.Link), tFile.Dir, tFile.Label)
 	if err != nil {
 		return fmt.Errorf("rtapi: build download request: %w", err)
 	}
-	if _, err := r.executeMulticall(ctx, req, 1); err != nil {
-		return fmt.Errorf("rtapi: download with options: %w", err)
+	if _, err := r.execute(ctx, req); err != nil {
+		return fmt.Errorf("rtapi: download: %w", err)
 	}
 	return nil
 }
@@ -868,20 +825,16 @@ func (r *Rtorrent) DownloadRawContext(ctx context.Context, data []byte, options 
 	if len(data) == 0 {
 		return fmt.Errorf("rtapi: torrent data must not be empty")
 	}
-
-	var dir, label string
-	if options != nil {
-		dir, label = options.Dir, options.Label
-		if dir == "" {
-			stats, err := r.StatsContext(ctx)
-			if err != nil {
-				return fmt.Errorf("rtapi: resolve default download directory: %w", err)
-			}
-			dir = stats.Directory
-		}
+	if options == nil {
+		options = &DotTorrentWithOptions{}
 	}
 
-	req, err := buildDownloadRawRequest(data, dir, label, options != nil)
+	// rTorrent 0.9.6 has no load.raw_start_verbose, so raw loads stay quiet.
+	method := "load.raw_start"
+	if options.Stopped {
+		method = "load.raw"
+	}
+	req, err := buildLoadRequest(method, newBase64Param(data), options.Dir, options.Label)
 	if err != nil {
 		return fmt.Errorf("rtapi: build raw download request: %w", err)
 	}

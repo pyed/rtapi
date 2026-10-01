@@ -176,13 +176,6 @@ func versionResponse() string {
 	return arrayResponse(result(stringValue("0.9.8")), result(stringValue("0.13.8")))
 }
 
-func statsResponse(directory string) string {
-	return arrayResponse(
-		result(intValue(0)), result(intValue(0)), result(intValue(6841)),
-		result(intValue(7476)), result(intValue(6980)), result(stringValue(directory)),
-	)
-}
-
 func TestNewRtorrentAndVersion(t *testing.T) {
 	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
 		if got := nestedMethod(call); got != "system.client_version" {
@@ -219,7 +212,7 @@ func TestBuildRequestsUseExactCountersAndEscapedOptions(t *testing.T) {
 		}
 	}
 
-	req, err = buildDownloadWithOptionsRequest("https://example.invalid/a.torrent", `/tmp/a";bad`, `x";bad`)
+	req, err = buildLoadRequest("load.start_verbose", newStringParam("https://example.invalid/a.torrent"), `/tmp/a";bad`, `x";bad`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +220,48 @@ func TestBuildRequestsUseExactCountersAndEscapedOptions(t *testing.T) {
 	if err := xml.Unmarshal([]byte(req), &call); err != nil {
 		t.Fatal(err)
 	}
-	params := call.Params[0].Value.Array.Values[0].Struct.Members[1].Value.Array.Values
-	if got, want := *params[2].String, "d.directory.set="+strconv.Quote(`/tmp/a";bad`); got != want {
+	if got, want := *call.Params[2].Value.String, "d.directory.set="+strconv.Quote(`/tmp/a";bad`); got != want {
 		t.Fatalf("directory command = %q, want %q", got, want)
 	}
-	if got, want := *params[3].String, "d.custom1.set="+strconv.Quote(`x";bad`); got != want {
+	if got, want := *call.Params[3].Value.String, "d.custom1.set="+strconv.Quote(`x";bad`); got != want {
 		t.Fatalf("label command = %q, want %q", got, want)
+	}
+}
+
+func TestLoadsChooseMethodAndOnlyGivenCommands(t *testing.T) {
+	data := []byte("d4:infod4:name4:testee")
+	tests := []struct {
+		name   string
+		load   func(*Rtorrent) error
+		method string
+		params int
+	}{
+		{"Download", func(r *Rtorrent) error { return r.Download("magnet:?xt=urn:btih:" + testHash) }, "load.start_verbose", 2},
+		{"options without directory or label", func(r *Rtorrent) error {
+			return r.DownloadWithOptions(&DotTorrentWithOptions{Link: "https://example.invalid/a.torrent"})
+		}, "load.start_verbose", 2},
+		{"stopped with directory and label", func(r *Rtorrent) error {
+			return r.DownloadWithOptions(&DotTorrentWithOptions{Link: "https://example.invalid/a.torrent", Dir: "/d", Label: "l", Stopped: true})
+		}, "load.verbose", 4},
+		{"raw without options", func(r *Rtorrent) error { return r.DownloadRaw(data, nil) }, "load.raw_start", 2},
+		{"raw stopped with label", func(r *Rtorrent) error {
+			return r.DownloadRaw(data, &DotTorrentWithOptions{Label: "l", Stopped: true})
+		}, "load.raw", 3},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var calls []xmlrpcMethodCall
+			client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+				calls = append(calls, call)
+				return response(intValue(0))
+			})
+			if err := test.load(client); err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 1 || calls[0].MethodName != test.method || len(calls[0].Params) != test.params {
+				t.Fatalf("calls = %+v, want one %s with %d params", calls, test.method, test.params)
+			}
+		})
 	}
 }
 
@@ -389,15 +418,10 @@ func TestDownloadOptionsAreImmutable(t *testing.T) {
 	options := &DotTorrentWithOptions{Link: "https://example.invalid/a.torrent", Name: "a", Label: "software"}
 	original := *options
 	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
-		switch nestedMethod(call) {
-		case "throttle.up.max":
-			return statsResponse("/default")
-		case "load.start":
-			return arrayResponse(result(intValue(0)))
-		default:
-			t.Errorf("unexpected call: %s / %s", call.MethodName, nestedMethod(call))
-			return topLevelFault(-1, "unexpected")
+		if call.MethodName != "load.start_verbose" {
+			t.Errorf("unexpected call: %s", call.MethodName)
 		}
+		return response(intValue(0))
 	})
 	if err := client.DownloadWithOptions(options); err != nil {
 		t.Fatal(err)
