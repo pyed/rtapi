@@ -1,6 +1,7 @@
 package rtapi_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pyed/rtapi"
@@ -11,7 +12,21 @@ var _ interface {
 	DownloadRaw([]byte, *rtapi.DotTorrentWithOptions) error
 	DeleteMetadata(...*rtapi.Torrent) error
 	SpeedsWithError() (uint64, uint64, error)
+
+	TorrentsContext(context.Context) (rtapi.Torrents, error)
+	GetTorrentContext(context.Context, string) (*rtapi.Torrent, error)
+	DownloadContext(context.Context, string) error
+	DownloadWithOptionsContext(context.Context, *rtapi.DotTorrentWithOptions) error
+	DownloadRawContext(context.Context, []byte, *rtapi.DotTorrentWithOptions) error
+	StartContext(context.Context, ...*rtapi.Torrent) error
+	StopContext(context.Context, ...*rtapi.Torrent) error
+	CheckContext(context.Context, ...*rtapi.Torrent) error
+	DeleteMetadataContext(context.Context, ...*rtapi.Torrent) error
+	SpeedsContext(context.Context) (uint64, uint64, error)
+	StatsContext(context.Context) (*rtapi.Stats, error)
 } = (*rtapi.Rtorrent)(nil)
+
+var _ func(context.Context, string) (*rtapi.Rtorrent, error) = rtapi.NewRtorrentContext
 
 func TestPublicTypesAreNameable(t *testing.T) {
 	var sorting rtapi.Sorting = rtapi.ByName

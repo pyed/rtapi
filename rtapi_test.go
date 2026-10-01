@@ -3,6 +3,7 @@ package rtapi
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
@@ -552,8 +553,34 @@ func TestResponseBoundsTimeoutAndImplicitString(t *testing.T) {
 	client.Timeout = 20 * time.Millisecond
 	started := time.Now()
 	err = client.Download("https://example.invalid/a.torrent")
-	if err == nil || time.Since(started) > 500*time.Millisecond {
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 500*time.Millisecond {
 		t.Fatalf("expected bounded timeout, got %v after %s", err, time.Since(started))
+	}
+}
+
+func TestContextCancellationInterruptsRequests(t *testing.T) {
+	release := make(chan struct{})
+	var requests atomic.Int32
+	client := testClient(t, func(_ string, _ xmlrpcMethodCall) string {
+		requests.Add(1)
+		<-release
+		return ""
+	})
+	t.Cleanup(func() { close(release) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	started := time.Now()
+	_, err := client.TorrentsContext(ctx)
+	if !errors.Is(err, context.Canceled) || time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("expected a prompt cancellation, got %v after %s", err, time.Since(started))
+	}
+
+	if err := client.StopContext(ctx, &Torrent{Hash: testHash}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled context was ignored: %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("a cancelled context still sent requests: %d", got)
 	}
 }
 

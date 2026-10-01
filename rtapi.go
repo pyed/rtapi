@@ -4,6 +4,7 @@ package rtapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
@@ -168,7 +169,8 @@ type DotTorrentWithOptions struct {
 type Rtorrent struct {
 	network, address string
 	Version          string
-	// Timeout bounds dialing, writing, and reading. Non-positive values use DefaultTimeout.
+	// Timeout bounds each request, from dialing to reading the response.
+	// Non-positive values use DefaultTimeout.
 	Timeout time.Duration
 	// MaxResponseSize bounds response bytes. Non-positive values use DefaultMaxResponseSize.
 	MaxResponseSize int64
@@ -176,6 +178,11 @@ type Rtorrent struct {
 
 // NewRtorrent takes the address, defined in .rtorrent.rc
 func NewRtorrent(address string) (*Rtorrent, error) {
+	return NewRtorrentContext(context.Background(), address)
+}
+
+// NewRtorrentContext is NewRtorrent with a context for the version request.
+func NewRtorrentContext(ctx context.Context, address string) (*Rtorrent, error) {
 	if strings.TrimSpace(address) == "" {
 		return nil, fmt.Errorf("rtapi: address must not be empty")
 	}
@@ -193,7 +200,7 @@ func NewRtorrent(address string) (*Rtorrent, error) {
 		MaxResponseSize: DefaultMaxResponseSize,
 	}
 
-	ver, err := rt.getVersion()
+	ver, err := rt.getVersion(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -515,19 +522,47 @@ func (v xmlrpcValue) uint64Value() (uint64, error) {
 	return uint64(n), nil
 }
 
-func (r *Rtorrent) execute(req string) (*xmlrpcMethodResponse, error) {
-	data := encode(req)
-	conn, err := r.send(data)
-	if err != nil {
-		return nil, fmt.Errorf("rtapi: send request: %w", err)
+func (r *Rtorrent) execute(ctx context.Context, req string) (*xmlrpcMethodResponse, error) {
+	if r == nil {
+		return nil, errors.New("rtapi: nil rTorrent client")
 	}
-	defer conn.Close()
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	return decodeMethodResponse(conn, r.MaxResponseSize)
+	body, err := r.send(ctx, encode(req))
+	if err != nil {
+		return nil, contextError(ctx, fmt.Errorf("rtapi: send request: %w", err))
+	}
+	defer body.Close()
+
+	resp, err := decodeMethodResponse(body, r.MaxResponseSize)
+	if err != nil {
+		return nil, contextError(ctx, err)
+	}
+	return resp, nil
 }
 
-func (r *Rtorrent) executeMulticall(req string, expected int) (*xmlrpcMethodResponse, error) {
-	resp, err := r.execute(req)
+// contextError adds the context's error to a request that was cancelled or
+// timed out, so callers can match it with errors.Is.
+func contextError(ctx context.Context, err error) error {
+	ctxErr := ctx.Err()
+	if ctxErr == nil && errors.Is(err, os.ErrDeadlineExceeded) {
+		// Connection deadlines come from ctx, but their timer can fire before
+		// the context's own.
+		ctxErr = context.DeadlineExceeded
+	}
+	if ctxErr != nil {
+		return fmt.Errorf("%w (%w)", err, ctxErr)
+	}
+	return err
+}
+
+func (r *Rtorrent) executeMulticall(ctx context.Context, req string, expected int) (*xmlrpcMethodResponse, error) {
+	resp, err := r.execute(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -552,12 +587,17 @@ func (r *Rtorrent) executeMulticall(req string, expected int) (*xmlrpcMethodResp
 
 // Torrents returns a slice that contains all the torrents.
 func (r *Rtorrent) Torrents() (Torrents, error) {
+	return r.TorrentsContext(context.Background())
+}
+
+// TorrentsContext is Torrents with a context.
+func (r *Rtorrent) TorrentsContext(ctx context.Context) (Torrents, error) {
 	req, err := buildTorrentsRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := r.execute(req)
+	resp, err := r.execute(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +617,7 @@ func (r *Rtorrent) Torrents() (Torrents, error) {
 	}
 
 	// set the Tracker field
-	if err := r.getTrackers(torrents); err != nil {
+	if err := r.getTrackers(ctx, torrents); err != nil {
 		return nil, err
 	}
 
@@ -685,10 +725,15 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 
 // GetTorrent takes a hash and returns *Torrent
 func (r *Rtorrent) GetTorrent(hash string) (*Torrent, error) {
+	return r.GetTorrentContext(context.Background(), hash)
+}
+
+// GetTorrentContext is GetTorrent with a context.
+func (r *Rtorrent) GetTorrentContext(ctx context.Context, hash string) (*Torrent, error) {
 	if strings.TrimSpace(hash) == "" {
 		return nil, fmt.Errorf("rtapi: torrent hash must not be empty")
 	}
-	torrents, err := r.Torrents()
+	torrents, err := r.TorrentsContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -703,6 +748,11 @@ func (r *Rtorrent) GetTorrent(hash string) (*Torrent, error) {
 
 // Download takes URL to a .torrent file to start downloading it.
 func (r *Rtorrent) Download(url string) error {
+	return r.DownloadContext(context.Background(), url)
+}
+
+// DownloadContext is Download with a context.
+func (r *Rtorrent) DownloadContext(ctx context.Context, url string) error {
 	if strings.TrimSpace(url) == "" {
 		return fmt.Errorf("rtapi: download URL must not be empty")
 	}
@@ -710,7 +760,7 @@ func (r *Rtorrent) Download(url string) error {
 	if err != nil {
 		return fmt.Errorf("rtapi: build download request: %w", err)
 	}
-	if _, err := r.execute(req); err != nil {
+	if _, err := r.execute(ctx, req); err != nil {
 		return fmt.Errorf("rtapi: download: %w", err)
 	}
 	return nil
@@ -718,6 +768,11 @@ func (r *Rtorrent) Download(url string) error {
 
 // DownloadWithOptions takes *DotTorrentWithOptions downloading it.
 func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
+	return r.DownloadWithOptionsContext(context.Background(), tFile)
+}
+
+// DownloadWithOptionsContext is DownloadWithOptions with a context.
+func (r *Rtorrent) DownloadWithOptionsContext(ctx context.Context, tFile *DotTorrentWithOptions) error {
 	if tFile == nil {
 		return fmt.Errorf("rtapi: torrent options must not be nil")
 	}
@@ -727,7 +782,7 @@ func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
 
 	dir := tFile.Dir
 	if dir == "" {
-		stats, err := r.Stats()
+		stats, err := r.StatsContext(ctx)
 		if err != nil {
 			return fmt.Errorf("rtapi: resolve default download directory: %w", err)
 		}
@@ -737,7 +792,7 @@ func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
 	if err != nil {
 		return fmt.Errorf("rtapi: build download request: %w", err)
 	}
-	if _, err := r.executeMulticall(req, 1); err != nil {
+	if _, err := r.executeMulticall(ctx, req, 1); err != nil {
 		return fmt.Errorf("rtapi: download with options: %w", err)
 	}
 	return nil
@@ -745,6 +800,11 @@ func (r *Rtorrent) DownloadWithOptions(tFile *DotTorrentWithOptions) error {
 
 // DownloadRaw loads torrent metadata without requiring rTorrent to fetch a URL.
 func (r *Rtorrent) DownloadRaw(data []byte, options *DotTorrentWithOptions) error {
+	return r.DownloadRawContext(context.Background(), data, options)
+}
+
+// DownloadRawContext is DownloadRaw with a context.
+func (r *Rtorrent) DownloadRawContext(ctx context.Context, data []byte, options *DotTorrentWithOptions) error {
 	if len(data) == 0 {
 		return fmt.Errorf("rtapi: torrent data must not be empty")
 	}
@@ -753,7 +813,7 @@ func (r *Rtorrent) DownloadRaw(data []byte, options *DotTorrentWithOptions) erro
 	if options != nil {
 		dir, label = options.Dir, options.Label
 		if dir == "" {
-			stats, err := r.Stats()
+			stats, err := r.StatsContext(ctx)
 			if err != nil {
 				return fmt.Errorf("rtapi: resolve default download directory: %w", err)
 			}
@@ -765,7 +825,7 @@ func (r *Rtorrent) DownloadRaw(data []byte, options *DotTorrentWithOptions) erro
 	if err != nil {
 		return fmt.Errorf("rtapi: build raw download request: %w", err)
 	}
-	if _, err := r.execute(req); err != nil {
+	if _, err := r.execute(ctx, req); err != nil {
 		return fmt.Errorf("rtapi: raw download: %w", err)
 	}
 	return nil
@@ -785,7 +845,7 @@ func torrentHashes(ts []*Torrent) ([]string, error) {
 	return hashes, nil
 }
 
-func (r *Rtorrent) mutate(method string, ts ...*Torrent) error {
+func (r *Rtorrent) mutate(ctx context.Context, method string, ts ...*Torrent) error {
 	hashes, err := torrentHashes(ts)
 	if err != nil {
 		return err
@@ -797,7 +857,7 @@ func (r *Rtorrent) mutate(method string, ts ...*Torrent) error {
 	if err != nil {
 		return fmt.Errorf("rtapi: build %s request: %w", method, err)
 	}
-	if _, err := r.executeMulticall(req, len(hashes)); err != nil {
+	if _, err := r.executeMulticall(ctx, req, len(hashes)); err != nil {
 		return fmt.Errorf("rtapi: %s: %w", method, err)
 	}
 	return nil
@@ -805,27 +865,48 @@ func (r *Rtorrent) mutate(method string, ts ...*Torrent) error {
 
 // Stop takes a *Torrent or more to 'd.stop' it/them.
 func (r *Rtorrent) Stop(ts ...*Torrent) error {
-	return r.mutate("d.stop", ts...)
+	return r.StopContext(context.Background(), ts...)
+}
+
+// StopContext is Stop with a context.
+func (r *Rtorrent) StopContext(ctx context.Context, ts ...*Torrent) error {
+	return r.mutate(ctx, "d.stop", ts...)
 }
 
 // Start takes a *Torrent or more to 'd.start' it/them.
 func (r *Rtorrent) Start(ts ...*Torrent) error {
-	return r.mutate("d.start", ts...)
+	return r.StartContext(context.Background(), ts...)
+}
+
+// StartContext is Start with a context.
+func (r *Rtorrent) StartContext(ctx context.Context, ts ...*Torrent) error {
+	return r.mutate(ctx, "d.start", ts...)
 }
 
 // Check takes a *Torrent or more to 'd.check_hash' it/them.
 func (r *Rtorrent) Check(ts ...*Torrent) error {
-	return r.mutate("d.check_hash", ts...)
+	return r.CheckContext(context.Background(), ts...)
+}
+
+// CheckContext is Check with a context.
+func (r *Rtorrent) CheckContext(ctx context.Context, ts ...*Torrent) error {
+	return r.mutate(ctx, "d.check_hash", ts...)
 }
 
 // DeleteMetadata removes torrent metadata from rTorrent after validating the
 // XML-RPC acknowledgement.
 func (r *Rtorrent) DeleteMetadata(ts ...*Torrent) error {
-	return r.mutate("d.erase", ts...)
+	return r.DeleteMetadataContext(context.Background(), ts...)
+}
+
+// DeleteMetadataContext is DeleteMetadata with a context.
+func (r *Rtorrent) DeleteMetadataContext(ctx context.Context, ts ...*Torrent) error {
+	return r.mutate(ctx, "d.erase", ts...)
 }
 
 // Delete removes torrents from rTorrent. Data deletion is deliberately rejected;
 // callers must enforce filesystem ownership and containment on the rTorrent host.
+//
 // Deprecated: use DeleteMetadata to erase metadata explicitly.
 func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
 	if withData {
@@ -836,12 +917,17 @@ func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
 
 // SpeedsWithError returns current Down/Up rates and preserves transport and RPC failures.
 func (r *Rtorrent) SpeedsWithError() (down, up uint64, err error) {
+	return r.SpeedsContext(context.Background())
+}
+
+// SpeedsContext is SpeedsWithError with a context.
+func (r *Rtorrent) SpeedsContext(ctx context.Context) (down, up uint64, err error) {
 	req, err := buildSpeedsRequest()
 	if err != nil {
 		return 0, 0, fmt.Errorf("rtapi: build speeds request: %w", err)
 	}
 
-	resp, err := r.executeMulticall(req, 2)
+	resp, err := r.executeMulticall(ctx, req, 2)
 	if err != nil {
 		return 0, 0, fmt.Errorf("rtapi: get speeds: %w", err)
 	}
@@ -877,6 +963,7 @@ func (r *Rtorrent) SpeedsWithError() (down, up uint64, err error) {
 }
 
 // Speeds returns current Down/Up rates.
+//
 // Deprecated: use SpeedsWithError so failures are not confused with idle rates.
 func (r *Rtorrent) Speeds() (down, up uint64) {
 	down, up, _ = r.SpeedsWithError()
@@ -891,13 +978,18 @@ type Stats struct {
 
 // Stats returns aggregate rTorrent information.
 func (r *Rtorrent) Stats() (*Stats, error) {
+	return r.StatsContext(context.Background())
+}
+
+// StatsContext is Stats with a context.
+func (r *Rtorrent) StatsContext(ctx context.Context) (*Stats, error) {
 	st := new(Stats)
 	req, err := buildStatsRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := r.executeMulticall(req, 6)
+	resp, err := r.executeMulticall(ctx, req, 6)
 	if err != nil {
 		return nil, err
 	}
@@ -965,13 +1057,13 @@ func (r *Rtorrent) Stats() (*Stats, error) {
 }
 
 // getVersion returns a string represnts rtorrent/libtorrent versions.
-func (r *Rtorrent) getVersion() (string, error) {
+func (r *Rtorrent) getVersion(ctx context.Context) (string, error) {
 	req, err := buildVersionRequest()
 	if err != nil {
 		return "", err
 	}
 
-	resp, err := r.executeMulticall(req, 2)
+	resp, err := r.executeMulticall(ctx, req, 2)
 	if err != nil {
 		return "", err
 	}
@@ -1008,7 +1100,7 @@ func (r *Rtorrent) getVersion() (string, error) {
 }
 
 // getTrackers takes Torrents and fill their tracker fields.
-func (r *Rtorrent) getTrackers(ts Torrents) error {
+func (r *Rtorrent) getTrackers(ctx context.Context, ts Torrents) error {
 	if len(ts) == 0 {
 		return nil
 	}
@@ -1025,7 +1117,7 @@ func (r *Rtorrent) getTrackers(ts Torrents) error {
 
 	// Trackerless torrents can return a per-call missing-target fault for t.url.
 	// Handle that expected absence locally while preserving every other fault.
-	resp, err := r.execute(req)
+	resp, err := r.execute(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -1103,36 +1195,43 @@ func calcPercentAndETA(size, done, downrate uint64) (string, uint64) {
 	return fmt.Sprintf("%.1f%%", rounded), ETA
 }
 
-// send takes scgi formated data and returns net.Conn
-func (r *Rtorrent) send(data []byte) (net.Conn, error) {
-	if r == nil {
-		return nil, fmt.Errorf("nil rTorrent client")
-	}
-	timeout := r.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
-
-	conn, err := (&net.Dialer{Timeout: timeout}).Dial(r.network, r.address)
+// send writes SCGI-formatted data and returns the connection to read the
+// response from. Cancelling ctx interrupts any read or write in progress.
+func (r *Rtorrent) send(ctx context.Context, data []byte) (io.ReadCloser, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, r.network, r.address)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %q: %w", r.network, r.address, err)
 	}
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("set connection deadline: %w", err)
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("set connection deadline: %w", err)
+		}
 	}
+	response := &scgiResponse{Conn: conn}
+	response.stop = context.AfterFunc(ctx, func() { conn.SetDeadline(time.Now()) })
 
 	written, err := writeAll(conn, data)
 	if err != nil {
-		conn.Close()
+		response.Close()
 		return nil, fmt.Errorf("write SCGI request after %d of %d bytes: %w", written, len(data), err)
 	}
 	if written != len(data) {
-		conn.Close()
+		response.Close()
 		return nil, fmt.Errorf("write SCGI request: wrote %d of %d bytes", written, len(data))
 	}
 
-	return conn, nil
+	return response, nil
+}
+
+type scgiResponse struct {
+	net.Conn
+	stop func() bool
+}
+
+func (s *scgiResponse) Close() error {
+	s.stop()
+	return s.Conn.Close()
 }
 
 func writeAll(w io.Writer, data []byte) (int, error) {
