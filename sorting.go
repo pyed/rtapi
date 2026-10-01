@@ -3,6 +3,7 @@ package rtapi
 import (
 	"cmp"
 	"slices"
+	"strings"
 )
 
 // Sorting selects a Torrent field and direction.
@@ -26,29 +27,34 @@ const (
 	ByUpTotalRev
 )
 
-// Sort orders torrents in place.
+// Sort orders torrents in place. Names compare case-insensitively, and the
+// sort is stable: torrents that compare equal keep their order, in reverse
+// sorts too.
 func (t Torrents) Sort(aSorting Sorting) {
+	var compare func(a, b *Torrent) int
 	switch aSorting {
 	case ByName, ByNameRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.Name, b.Name) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) }
 	case ByDownRate, ByDownRateRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.DownRate, b.DownRate) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.DownRate, b.DownRate) }
 	case ByUpRate, ByUpRateRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.UpRate, b.UpRate) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.UpRate, b.UpRate) }
 	case BySize, BySizeRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.Size, b.Size) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.Size, b.Size) }
 	case ByRatio, ByRatioRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.Ratio, b.Ratio) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.Ratio, b.Ratio) }
 	case ByAge, ByAgeRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.Age, b.Age) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.Age, b.Age) }
 	case ByUpTotal, ByUpTotalRev:
-		slices.SortFunc(t, func(a, b *Torrent) int { return cmp.Compare(a.UpTotal, b.UpTotal) })
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.UpTotal, b.UpTotal) }
 	default:
 		return
 	}
 
 	switch aSorting {
 	case ByNameRev, ByDownRateRev, ByUpRateRev, BySizeRev, ByRatioRev, ByAgeRev, ByUpTotalRev:
-		slices.Reverse(t)
+		ascending := compare
+		compare = func(a, b *Torrent) int { return ascending(b, a) }
 	}
+	slices.SortStableFunc(t, compare)
 }

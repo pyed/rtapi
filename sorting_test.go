@@ -1,6 +1,7 @@
 package rtapi
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -110,5 +111,32 @@ func TestReverseSorting(t *testing.T) {
 		if torrents[0].Name != test.first {
 			t.Errorf("Sort(%d) first = %q, want %q", test.sorting, torrents[0].Name, test.first)
 		}
+	}
+}
+
+func TestSortIgnoresNameCaseAndIsStable(t *testing.T) {
+	names := func(torrents Torrents) string {
+		var result []string
+		for _, torrent := range torrents {
+			result = append(result, torrent.Name)
+		}
+		return strings.Join(result, " ")
+	}
+	// Case-sensitive ordering would put "Cherry" first.
+	torrents := Torrents{{Name: "banana"}, {Name: "Cherry"}, {Name: "apple"}}
+	torrents.Sort(ByName)
+	if got := names(torrents); got != "apple banana Cherry" {
+		t.Fatalf("ByName = %s", got)
+	}
+
+	// Torrents with equal sizes keep their order, whichever the direction.
+	torrents = Torrents{{Name: "a", Size: 1}, {Name: "b", Size: 2}, {Name: "c", Size: 1}, {Name: "d", Size: 2}}
+	torrents.Sort(BySize)
+	if got := names(torrents); got != "a c b d" {
+		t.Fatalf("BySize = %s", got)
+	}
+	torrents.Sort(BySizeRev)
+	if got := names(torrents); got != "b d a c" {
+		t.Fatalf("BySizeRev = %s", got)
 	}
 }

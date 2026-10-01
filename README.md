@@ -81,7 +81,8 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 - `GetTorrent` requests only the one torrent rather than listing them all.
 - `Torrents.Sort` takes an explicit `rtapi.Sorting` value. The unsafe
   process-global `CurrentSorting` variable was removed; call `Sort` on each
-  returned value instead.
+  returned value instead. Sorting is stable and compares names
+  case-insensitively.
 - `DeleteMetadata` erases metadata only after rTorrent acknowledges the RPC.
   The older `Delete(false, ...)` form remains as a deprecated compatibility shim.
 - `Delete(true, ...)` returns `ErrUnsafeDataDelete` before any RPC or local
