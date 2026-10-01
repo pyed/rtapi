@@ -59,6 +59,9 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 ## Important APIs and compatibility
 
 - Transfer fields (`Size`, `Completed`, and `UpTotal`) contain exact byte counts.
+- `Path` (`d.base_path`) is empty until rTorrent opens a torrent. `Directory`
+  and `MultiFile` are always reported: `Directory` is the data directory of a
+  multi-file torrent, or the directory containing a single-file torrent's file.
 - `SpeedsWithError` reports failures. `Speeds` remains as a deprecated
   compatibility shim that cannot distinguish failure from zero traffic.
 - `DownloadRaw` loads torrent bytes directly, avoiding credential-bearing

@@ -241,6 +241,7 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 <value><i8>12</i8></value><value>implicit message</value><value><string>/remote/path</string></value>
 <value><i8>0</i8></value><value><string>leech</string></value><value><i8>0</i8></value>
 <value><i8>0</i8></value><value><string>label</string></value>
+<value><string>/remote/dir</string></value><value><i8>1</i8></value>
 </data></array></value>`
 	var value xmlrpcValue
 	if err := xml.Unmarshal([]byte(fragment), &value); err != nil {
@@ -255,6 +256,9 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 	}
 	if torrent.Ratio != 1.3 || torrent.ETA != 1 || torrent.Message != "implicit message" {
 		t.Fatalf("unexpected derived values: %#v", torrent)
+	}
+	if torrent.Directory != "/remote/dir" || !torrent.MultiFile {
+		t.Fatalf("unexpected data location: %#v", torrent)
 	}
 }
 
@@ -504,6 +508,7 @@ func torrentRow(name, hash string) string {
 		intValue(1), intValue(1), intValue(0), intValue(0), intValue(1),
 		stringValue(""), stringValue("/remote/" + name), intValue(0),
 		stringValue("leech"), intValue(1), intValue(0), stringValue(""),
+		stringValue("/remote/" + name), intValue(1),
 	}
 	var body strings.Builder
 	body.WriteString("<array><data>")

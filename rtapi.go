@@ -55,8 +55,13 @@ type Torrent struct {
 	State     string
 	Message   string
 	Tracker   *url.URL
-	Path      string
+	Path      string // d.base_path; empty until rTorrent opens the torrent
 	Label     string // ruTorrent label
+	// Directory is reported even for torrents rTorrent has not opened: it is
+	// the data directory of a multi-file torrent, or the directory containing
+	// a single-file torrent's file.
+	Directory string
+	MultiFile bool
 }
 
 // Torrents is a slice of *Torrent.
@@ -217,6 +222,8 @@ func buildTorrentsRequest() (string, error) {
 		"d.complete=",
 		"d.hashing=",
 		"d.custom1=",
+		"d.directory=",
+		"d.is_multi_file=",
 	}
 
 	params := make([]xmlrpcParam, 0, len(fields))
@@ -583,7 +590,7 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 		return nil, fmt.Errorf("rtapi: parse torrent: %w", err)
 	}
 
-	const expectedFields = 16
+	const expectedFields = 18
 	if len(fields) < expectedFields {
 		return nil, fmt.Errorf("rtapi: expected %d torrent fields, got %d", expectedFields, len(fields))
 	}
@@ -649,6 +656,14 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 	if t.Label, err = fields[15].stringValue(); err != nil {
 		return nil, fmt.Errorf("rtapi: parse torrent label: %w", err)
 	}
+	if t.Directory, err = fields[16].stringValue(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent directory: %w", err)
+	}
+	multiFile, err := fields[17].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent multi-file flag: %w", err)
+	}
+	t.MultiFile = multiFile != 0
 
 	switch {
 	case isActive == 1 && len(t.Message) != 0:
