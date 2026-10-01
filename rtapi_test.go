@@ -13,8 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -375,7 +373,7 @@ func TestMutationsAcknowledgeResponsesAndFaults(t *testing.T) {
 	}
 }
 
-func TestMutationValidationAndSafeDelete(t *testing.T) {
+func TestMutationValidation(t *testing.T) {
 	var requests atomic.Int32
 	client := testClient(t, func(_ string, _ xmlrpcMethodCall) string {
 		requests.Add(1)
@@ -396,22 +394,6 @@ func TestMutationValidationAndSafeDelete(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("validation issued %d requests", requests.Load())
-	}
-
-	dir := t.TempDir()
-	sentinel := filepath.Join(dir, "keep")
-	if err := os.WriteFile(sentinel, []byte("safe"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := client.Delete(true, &Torrent{Hash: testHash, Path: dir})
-	if !errors.Is(err, ErrUnsafeDataDelete) {
-		t.Fatalf("expected ErrUnsafeDataDelete, got %v", err)
-	}
-	if _, err := os.Stat(sentinel); err != nil {
-		t.Fatalf("local data was touched: %v", err)
-	}
-	if requests.Load() != 0 {
-		t.Fatalf("unsafe delete issued %d requests", requests.Load())
 	}
 }
 
@@ -459,7 +441,7 @@ func TestDownloadRawUsesBase64AndNeverSendsLink(t *testing.T) {
 	}
 }
 
-func TestSpeedsWithErrorAndLegacyShim(t *testing.T) {
+func TestSpeedsWithError(t *testing.T) {
 	client := testClient(t, func(_ string, _ xmlrpcMethodCall) string {
 		return arrayResponse(result(intValue(336650)), result(intValue(593)))
 	})
@@ -467,19 +449,12 @@ func TestSpeedsWithErrorAndLegacyShim(t *testing.T) {
 	if err != nil || down != 336650 || up != 593 {
 		t.Fatalf("SpeedsWithError = %d,%d,%v", down, up, err)
 	}
-	down, up = client.Speeds()
-	if down != 336650 || up != 593 {
-		t.Fatalf("Speeds = %d,%d", down, up)
-	}
 
 	failing := testClient(t, func(_ string, _ xmlrpcMethodCall) string {
 		return topLevelFault(-500, "telemetry unavailable")
 	})
 	if _, _, err := failing.SpeedsWithError(); err == nil {
 		t.Fatal("expected speed error")
-	}
-	if down, up := failing.Speeds(); down != 0 || up != 0 {
-		t.Fatalf("legacy shim = %d,%d", down, up)
 	}
 }
 

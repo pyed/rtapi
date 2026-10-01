@@ -28,10 +28,6 @@ const (
 	DefaultMaxResponseSize int64 = 16 << 20
 )
 
-// ErrUnsafeDataDelete is returned because torrent paths belong to the rTorrent
-// host and must never be deleted from the API client's filesystem.
-var ErrUnsafeDataDelete = errors.New("rtapi: deleting torrent data is unsafe; delete it on the explicitly authorized rTorrent host")
-
 const (
 	Leeching = "Leeching"
 	Seeding  = "Seeding"
@@ -973,17 +969,6 @@ func (r *Rtorrent) DeleteMetadataContext(ctx context.Context, ts ...*Torrent) er
 	return r.mutate(ctx, "d.erase", ts...)
 }
 
-// Delete removes torrents from rTorrent. Data deletion is deliberately rejected;
-// callers must enforce filesystem ownership and containment on the rTorrent host.
-//
-// Deprecated: use DeleteMetadata to erase metadata explicitly.
-func (r *Rtorrent) Delete(withData bool, ts ...*Torrent) error {
-	if withData {
-		return ErrUnsafeDataDelete
-	}
-	return r.DeleteMetadata(ts...)
-}
-
 // SpeedsWithError returns current Down/Up rates and preserves transport and RPC failures.
 func (r *Rtorrent) SpeedsWithError() (down, up uint64, err error) {
 	return r.SpeedsContext(context.Background())
@@ -1029,14 +1014,6 @@ func (r *Rtorrent) SpeedsContext(ctx context.Context) (down, up uint64, err erro
 	}
 
 	return down, up, nil
-}
-
-// Speeds returns current Down/Up rates.
-//
-// Deprecated: use SpeedsWithError so failures are not confused with idle rates.
-func (r *Rtorrent) Speeds() (down, up uint64) {
-	down, up, _ = r.SpeedsWithError()
-	return down, up
 }
 
 // Stats describes rTorrent's aggregate transfer and listener state.

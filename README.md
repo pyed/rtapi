@@ -65,14 +65,13 @@ a legitimately large library needs more. Transport errors, malformed responses,
 and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 `*rtapi.XMLRPCFault`.
 
-## Important APIs and compatibility
+## API notes
 
 - Transfer fields (`Size`, `Completed`, and `UpTotal`) contain exact byte counts.
 - `Path` (`d.base_path`) is empty until rTorrent opens a torrent. `Directory`
   and `MultiFile` are always reported: `Directory` is the data directory of a
   multi-file torrent, or the directory containing a single-file torrent's file.
-- `SpeedsWithError` reports failures. `Speeds` remains as a deprecated
-  compatibility shim that cannot distinguish failure from zero traffic.
+- `SpeedsWithError` returns the current transfer rates.
 - `DownloadRaw` loads torrent bytes directly, avoiding credential-bearing
   intermediary URLs. `DownloadWithOptions` remains available for URL loading.
   Set `DotTorrentWithOptions.Stopped` to load a torrent without starting it. An
@@ -85,16 +84,25 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 - `GlobalLimits` and `SetGlobalLimits` read and set the global download and
   upload rate limits, in bytes per second; zero means unlimited.
 - `FreeDiskSpace` reports the free space on the filesystem holding a torrent.
-- `Torrents.Sort` takes an explicit `rtapi.Sorting` value. The unsafe
-  process-global `CurrentSorting` variable was removed; call `Sort` on each
-  returned value instead. Sorting is stable and compares names
-  case-insensitively.
-- `DeleteMetadata` erases metadata only after rTorrent acknowledges the RPC.
-  The older `Delete(false, ...)` form remains as a deprecated compatibility shim.
-- `Delete(true, ...)` returns `ErrUnsafeDataDelete` before any RPC or local
-  filesystem access. Data belongs to the rTorrent host; an application that
-  offers data deletion must enforce its own explicit local root and containment
-  policy.
+- `Torrents.Sort` takes an explicit `rtapi.Sorting` value. Sorting is stable
+  and compares names case-insensitively.
+- `DeleteMetadata` erases torrents from rTorrent and checks that rTorrent
+  acknowledged every one. rtapi never deletes data: the data belongs to the
+  rTorrent host, so an application that offers it must enforce its own
+  containment policy there.
+
+## Versions
+
+From v1.0.0, rtapi follows semantic versioning: v1 releases add to the API but
+do not break it.
+
+Upgrading from v0:
+
+- `Speeds` is gone; use `SpeedsWithError` or `SpeedsContext`, which report
+  failures instead of returning zero.
+- `Delete` and `ErrUnsafeDataDelete` are gone; use `DeleteMetadata`.
+- The process-global `CurrentSorting` variable is gone; pass an
+  `rtapi.Sorting` to `Torrents.Sort`.
 
 ## Development
 
