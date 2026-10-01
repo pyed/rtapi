@@ -14,6 +14,12 @@ var _ interface {
 	SpeedsWithError() (uint64, uint64, error)
 
 	TorrentsContext(context.Context) (rtapi.Torrents, error)
+	List(rtapi.ListOptions) (rtapi.Torrents, error)
+	ListContext(context.Context, rtapi.ListOptions) (rtapi.Torrents, error)
+	Trackers(rtapi.Torrents) error
+	TrackersContext(context.Context, rtapi.Torrents) error
+	Hashes() ([]string, error)
+	HashesContext(context.Context) ([]string, error)
 	GetTorrentContext(context.Context, string) (*rtapi.Torrent, error)
 	DownloadContext(context.Context, string) error
 	DownloadWithOptionsContext(context.Context, *rtapi.DotTorrentWithOptions) error

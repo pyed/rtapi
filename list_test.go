@@ -1,0 +1,198 @@
+package rtapi
+
+import (
+	"bytes"
+	"errors"
+	"io"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func TestListFetchesTrackersOnlyWhenAsked(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		mu.Lock()
+		methods = append(methods, call.MethodName)
+		mu.Unlock()
+		switch call.MethodName {
+		case "d.multicall2":
+			return arrayResponse(torrentRow("tracked", testHash), torrentRow("other", strings.Repeat("B", 40)))
+		case "system.multicall":
+			return arrayResponse(result(stringValue("udp://tracker.invalid:80")), result(stringValue("")))
+		}
+		t.Errorf("unexpected method %q", call.MethodName)
+		return topLevelFault(-1, "unexpected")
+	})
+	called := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		defer func() { methods = nil }()
+		return methods
+	}
+
+	torrents, err := client.List(ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(torrents) != 2 || torrents[0].Name != "tracked" || torrents[0].Tracker != nil {
+		t.Fatalf("List = %+v", torrents)
+	}
+	if got := called(); len(got) != 1 {
+		t.Fatalf("List without trackers made calls %v", got)
+	}
+
+	if err := client.Trackers(torrents); err != nil {
+		t.Fatal(err)
+	}
+	if torrents[0].Tracker == nil || torrents[0].Tracker.Host != "tracker.invalid:80" || torrents[1].Tracker != nil {
+		t.Fatalf("Trackers set %v and %v", torrents[0].Tracker, torrents[1].Tracker)
+	}
+	if got := called(); len(got) != 1 || got[0] != "system.multicall" {
+		t.Fatalf("Trackers made calls %v", got)
+	}
+
+	if torrents, err = client.List(ListOptions{Trackers: true}); err != nil || torrents[0].Tracker == nil {
+		t.Fatalf("List with trackers = %+v, %v", torrents, err)
+	}
+	if got := called(); len(got) != 2 {
+		t.Fatalf("List with trackers made calls %v", got)
+	}
+
+	if err := client.Trackers(Torrents{torrents[0], nil}); err == nil {
+		t.Fatal("Trackers accepted a nil torrent")
+	}
+	if err := client.Trackers(Torrents{{Name: "no hash"}}); err == nil {
+		t.Fatal("Trackers accepted a torrent without a hash")
+	}
+	if got := called(); len(got) != 0 {
+		t.Fatalf("invalid Trackers calls reached rTorrent: %v", got)
+	}
+}
+
+func TestHashesAsksOnlyForHashes(t *testing.T) {
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		var params []string
+		for _, param := range call.Params {
+			params = append(params, *param.Value.String)
+		}
+		if call.MethodName != "d.multicall2" || strings.Join(params, " ") != " main d.hash=" {
+			t.Errorf("unexpected call %s %q", call.MethodName, params)
+			return topLevelFault(-1, "unexpected")
+		}
+		return arrayResponse(result(stringValue(testHash)), result(stringValue(strings.Repeat("B", 40))))
+	})
+	hashes, err := client.Hashes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(hashes, ",") != testHash+","+strings.Repeat("B", 40) {
+		t.Fatalf("Hashes = %v", hashes)
+	}
+
+	malformed := testClient(t, func(string, xmlrpcMethodCall) string {
+		return arrayResponse("<array><data></data></array>")
+	})
+	if _, err := malformed.Hashes(); err == nil {
+		t.Fatal("Hashes accepted a row without a hash")
+	}
+}
+
+func TestListSwitchesToDMulticallWhenRTorrentDropsTheAlias(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		mu.Lock()
+		methods = append(methods, call.MethodName)
+		mu.Unlock()
+		if call.MethodName == "d.multicall2" {
+			return topLevelFault(noSuchMethod, "method 'd.multicall2' not defined")
+		}
+		if call.MethodName != "d.multicall" || len(call.Params) < 2 || *call.Params[1].Value.String != "main" {
+			t.Errorf("unexpected call %+v", call)
+		}
+		return arrayResponse(result(stringValue(testHash)))
+	})
+	for range 2 {
+		if hashes, err := client.Hashes(); err != nil || len(hashes) != 1 {
+			t.Fatalf("Hashes = %v, %v", hashes, err)
+		}
+	}
+	if got := strings.Join(methods, " "); got != "d.multicall2 d.multicall d.multicall" {
+		t.Fatalf("methods = %s; want one d.multicall2 and then only d.multicall", got)
+	}
+
+	// Other faults are errors, and do not switch.
+	other := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		if call.MethodName != "d.multicall2" {
+			t.Errorf("switched to %s after an unrelated fault", call.MethodName)
+		}
+		return topLevelFault(-503, "permission denied")
+	})
+	var fault *XMLRPCFault
+	if _, err := other.List(ListOptions{}); !errors.As(err, &fault) || fault.Code != -503 {
+		t.Fatalf("List = %v, want the -503 fault", err)
+	}
+	if _, err := other.List(ListOptions{}); err == nil {
+		t.Fatal("second List succeeded")
+	}
+}
+
+// chunkReader returns its data a few bytes at a time.
+type chunkReader struct {
+	data []byte
+	size int
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p[:min(len(p), r.size)], r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+func TestReadResponseSizesBufferFromStatedLength(t *testing.T) {
+	body := wrapParams("<string>" + strings.Repeat("x", 100_000) + "</string>")
+	header := "Status: 200 OK\r\nContent-Type: text/xml\r\nContent-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n"
+	scgi := header + body
+
+	for _, test := range []struct {
+		name   string
+		reader io.Reader
+		length int64
+		want   string
+		// exact means the buffer was allocated once at the stated size.
+		exact bool
+	}{
+		{"SCGI header", strings.NewReader(scgi), -1, scgi, true},
+		{"HTTP length", strings.NewReader(body), int64(len(body)), body, true},
+		{"no header", strings.NewReader(body), -1, body, false},
+		{"header split across reads", &chunkReader{[]byte(scgi), 10}, -1, scgi, false},
+		{"understated length", strings.NewReader(body), 10, body, false},
+		{"overstated length", strings.NewReader("short"), 1 << 20, "short", false},
+		{"lying SCGI header", strings.NewReader("Content-Length: 99999999999\r\n\r\nshort"), -1, "Content-Length: 99999999999\r\n\r\nshort", false},
+	} {
+		got, err := readResponse(test.reader, 1<<20, test.length)
+		if err != nil || !bytes.Equal(got, []byte(test.want)) {
+			t.Errorf("%s: readResponse = %d bytes, %v; want %d bytes", test.name, len(got), err, len(test.want))
+			continue
+		}
+		// The allocator rounds large buffers up to whole 8 KiB pages.
+		if test.exact && (cap(got) <= len(test.want) || cap(got) > len(test.want)+8192) {
+			t.Errorf("%s: buffer capacity %d for %d bytes; want one allocation of the stated size", test.name, cap(got), len(got))
+		}
+	}
+
+	// The limit still applies when the stated length is larger.
+	got, err := readResponse(strings.NewReader(scgi), 100, -1)
+	if err != nil || len(got) != 101 || cap(got) > 4096 {
+		t.Fatalf("limited readResponse = %d bytes (capacity %d), %v; want 101", len(got), cap(got), err)
+	}
+	if _, err := decodeMethodResponse(strings.NewReader(scgi), 100); err == nil || !strings.Contains(err.Error(), "exceeds 100 bytes") {
+		t.Fatalf("decodeMethodResponse over the limit = %v", err)
+	}
+}

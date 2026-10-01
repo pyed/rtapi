@@ -77,6 +77,11 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   Set `DotTorrentWithOptions.Stopped` to load a torrent without starting it. An
   empty `Dir` or `Label` leaves rTorrent's default. URL loads use rTorrent's
   verbose load commands, so rTorrent logs why a link failed to load.
+- `Torrents` makes two requests: one for every torrent's details and one, with
+  a call per torrent, for their trackers. For large libraries, `List` with
+  `ListOptions{}` skips the trackers, and `Trackers` fills them in later for
+  the torrents that need them. `Hashes` lists only info-hashes, the cheapest
+  way to see which torrents are loaded.
 - `GetTorrent` requests only the one torrent rather than listing them all.
 - `Torrent.Finished` is when a torrent completed, in Unix seconds.
 - `Files` lists a torrent's files, and `SetFilePriorities` skips or prioritizes
@@ -95,6 +100,11 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 
 From v1.0.0, rtapi follows semantic versioning: v1 releases add to the API but
 do not break it.
+
+v1.1.0 adds `List`, `Trackers`, and `Hashes`, and decodes responses several
+times faster with a fraction of the memory, which matters for libraries of
+thousands of torrents. If rTorrent drops `d.multicall2`, as it plans to,
+listing switches to `d.multicall`.
 
 Upgrading from v0:
 

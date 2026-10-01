@@ -15,8 +15,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -190,6 +192,9 @@ type Rtorrent struct {
 	Timeout time.Duration
 	// MaxResponseSize bounds response bytes. Non-positive values use DefaultMaxResponseSize.
 	MaxResponseSize int64
+	// renamedMulticall is set, atomically, once rTorrent has answered that it
+	// has no d.multicall2.
+	renamedMulticall int32
 }
 
 // NewRtorrent connects to rTorrent at address: the path of an SCGI Unix
@@ -261,17 +266,17 @@ var torrentFields = []string{
 }
 
 func buildTorrentsRequest() (string, error) {
+	return buildDownloadMulticall("d.multicall2", torrentFields)
+}
+
+// buildDownloadMulticall builds a call of method, d.multicall2 or d.multicall,
+// for fields of every torrent.
+func buildDownloadMulticall(method string, fields []string) (string, error) {
 	params := []xmlrpcParam{newStringParam(""), newStringParam("main")}
-	for _, field := range torrentFields {
+	for _, field := range fields {
 		params = append(params, newStringParam(field+"="))
 	}
-
-	request := xmlrpcMethodCall{
-		MethodName: "d.multicall2",
-		Params:     params,
-	}
-
-	return marshalMethodCall(request)
+	return marshalMethodCall(xmlrpcMethodCall{MethodName: method, Params: params})
 }
 
 // buildLoadRequest builds a load call for source, followed by the commands
@@ -357,24 +362,96 @@ func buildVersionRequest() (string, error) {
 	return marshalMethodCall(request)
 }
 
+// marshalMethodCall writes request as encoding/xml would, without its
+// reflection: a torrent list's tracker request has a call per torrent.
 func marshalMethodCall(request xmlrpcMethodCall) (string, error) {
-	payload, err := xml.Marshal(request)
-	if err != nil {
-		return "", err
+	var b bytes.Buffer
+	b.WriteString(xml.Header)
+	b.WriteString("<methodCall><methodName>")
+	escapeText(&b, request.MethodName)
+	b.WriteString("</methodName>")
+	b.WriteString("<params>")
+	for _, param := range request.Params {
+		b.WriteString("<param>")
+		writeValue(&b, param.Value)
+		b.WriteString("</param>")
 	}
+	b.WriteString("</params>")
+	b.WriteString("</methodCall>")
+	return b.String(), nil
+}
 
-	return xml.Header + string(payload), nil
+func writeValue(b *bytes.Buffer, v xmlrpcValue) {
+	b.WriteString("<value>")
+	writeText := func(element, text string) {
+		b.WriteString("<" + element + ">")
+		escapeText(b, text)
+		b.WriteString("</" + element + ">")
+	}
+	if v.String != nil {
+		writeText("string", *v.String)
+	}
+	if v.Base64 != nil {
+		writeText("base64", *v.Base64)
+	}
+	if v.Array != nil {
+		b.WriteString("<array><data>")
+		for _, item := range v.Array.Values {
+			writeValue(b, item)
+		}
+		b.WriteString("</data></array>")
+	}
+	if v.Struct != nil {
+		b.WriteString("<struct>")
+		for _, member := range v.Struct.Members {
+			b.WriteString("<member>")
+			writeText("name", member.Name)
+			writeValue(b, member.Value)
+			b.WriteString("</member>")
+		}
+		b.WriteString("</struct>")
+	}
+	for _, number := range []struct {
+		element string
+		value   *int64
+	}{{"int", v.Int}, {"i4", v.I4}, {"i8", v.I8}} {
+		if number.value != nil {
+			writeText(number.element, strconv.FormatInt(*number.value, 10))
+		}
+	}
+	if v.Double != nil {
+		writeText("double", strconv.FormatFloat(*v.Double, 'g', -1, 64))
+	}
+	if v.Boolean != nil {
+		writeText("boolean", strconv.FormatBool(*v.Boolean))
+	}
+	escapeText(b, v.Text)
+	b.WriteString("</value>")
+}
+
+// escapeText writes s escaped as xml.EscapeText escapes it, without copying
+// the common text that needs no escaping.
+func escapeText(b *bytes.Buffer, s string) {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c > 0x7f || c == '"' || c == '\'' || c == '&' || c == '<' || c == '>' {
+			xml.EscapeText(b, []byte(s))
+			return
+		}
+	}
+	b.WriteString(s)
 }
 
 func decodeMethodResponse(r io.Reader, limit int64) (*xmlrpcMethodResponse, error) {
+	return decodeSizedResponse(r, limit, -1)
+}
+
+// decodeSizedResponse is decodeMethodResponse for a response of length bytes,
+// or of unknown length when length is negative.
+func decodeSizedResponse(r io.Reader, limit, length int64) (*xmlrpcMethodResponse, error) {
 	if limit <= 0 {
 		limit = DefaultMaxResponseSize
 	}
-	readLimit := limit
-	if readLimit < math.MaxInt64 {
-		readLimit++
-	}
-	payload, err := io.ReadAll(io.LimitReader(r, readLimit))
+	payload, err := readResponse(r, limit, length)
 	if err != nil {
 		return nil, fmt.Errorf("rtapi: read response: %w", err)
 	}
@@ -389,9 +466,12 @@ func decodeMethodResponse(r io.Reader, limit int64) (*xmlrpcMethodResponse, erro
 
 	payload = payload[start:]
 
-	var resp xmlrpcMethodResponse
-	if err := xml.Unmarshal(payload, &resp); err != nil {
-		return nil, fmt.Errorf("rtapi: decode XML-RPC response: %w", err)
+	resp, ok := decodeFast(payload)
+	if !ok {
+		resp = new(xmlrpcMethodResponse)
+		if err := xml.Unmarshal(payload, resp); err != nil {
+			return nil, fmt.Errorf("rtapi: decode XML-RPC response: %w", err)
+		}
 	}
 	if resp.Fault != nil {
 		fault, ok, err := faultFromValue(resp.Fault.Value)
@@ -407,7 +487,79 @@ func decodeMethodResponse(r io.Reader, limit int64) (*xmlrpcMethodResponse, erro
 		return nil, fmt.Errorf("rtapi: XML-RPC response missing params")
 	}
 
-	return &resp, nil
+	return resp, nil
+}
+
+// readResponse reads r to its end, or to one byte past limit. A response
+// that states its length, in length or in the Content-Length of the header
+// rTorrent puts before SCGI responses, is read into a buffer allocated once at
+// that size rather than grown as it fills; a large library's torrent list is
+// megabytes.
+func readResponse(r io.Reader, limit, length int64) ([]byte, error) {
+	readLimit := limit
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	r = io.LimitReader(r, readLimit)
+	var buf []byte
+	if length >= 0 && length < readLimit {
+		// One byte more than stated lets the read that finds the end fit.
+		buf = make([]byte, 0, length+1)
+	} else {
+		head := make([]byte, 512)
+		n, err := r.Read(head)
+		head = head[:n]
+		total, ok := scgiResponseLength(head)
+		if !ok || total >= readLimit {
+			if err != nil {
+				return head, ignoreEOF(err)
+			}
+			return io.ReadAll(io.MultiReader(bytes.NewReader(head), r))
+		}
+		buf = append(make([]byte, 0, max(total+1, int64(n))), head...)
+		if err != nil {
+			return buf, ignoreEOF(err)
+		}
+	}
+	for {
+		if len(buf) == cap(buf) {
+			// The stated length was wrong.
+			buf = slices.Grow(buf, cap(buf))
+		}
+		n, err := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+n]
+		if err != nil {
+			return buf, ignoreEOF(err)
+		}
+	}
+}
+
+func ignoreEOF(err error) error {
+	if err == io.EOF {
+		return nil
+	}
+	return err
+}
+
+// scgiResponseLength returns the length of an SCGI response, header included,
+// from the Content-Length in its header, which starts data.
+func scgiResponseLength(data []byte) (int64, bool) {
+	end := bytes.Index(data, []byte("\r\n\r\n"))
+	if end < 0 {
+		return 0, false
+	}
+	for line := range strings.SplitSeq(string(data[:end]), "\r\n") {
+		name, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
+			continue
+		}
+		length, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || length < 0 || length > math.MaxInt64-int64(end)-4 {
+			return 0, false
+		}
+		return int64(end) + 4 + length, true
+	}
+	return 0, false
 }
 
 // XMLRPCFault is an error returned by rTorrent.
@@ -531,8 +683,9 @@ func (r *Rtorrent) execute(ctx context.Context, req string) (*xmlrpcMethodRespon
 
 	var body io.ReadCloser
 	var err error
+	length := int64(-1)
 	if r.endpoint != nil {
-		body, err = r.post(ctx, req)
+		body, length, err = r.post(ctx, req)
 	} else {
 		body, err = r.send(ctx, encode(req))
 	}
@@ -541,7 +694,7 @@ func (r *Rtorrent) execute(ctx context.Context, req string) (*xmlrpcMethodRespon
 	}
 	defer body.Close()
 
-	resp, err := decodeMethodResponse(body, r.MaxResponseSize)
+	resp, err := decodeSizedResponse(body, r.MaxResponseSize, length)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -587,44 +740,116 @@ func (r *Rtorrent) executeMulticall(ctx context.Context, req string, expected in
 	return resp, nil
 }
 
-// Torrents returns a slice that contains all the torrents.
+// Torrents returns every torrent, with its tracker. List is cheaper when the
+// trackers are not needed.
 func (r *Rtorrent) Torrents() (Torrents, error) {
 	return r.TorrentsContext(context.Background())
 }
 
 // TorrentsContext is Torrents with a context.
 func (r *Rtorrent) TorrentsContext(ctx context.Context) (Torrents, error) {
-	req, err := buildTorrentsRequest()
+	return r.ListContext(ctx, ListOptions{Trackers: true})
+}
+
+// ListOptions chooses what List fetches besides each torrent's own details.
+type ListOptions struct {
+	// Trackers sets each torrent's Tracker, as Torrents does. That takes a
+	// second request with a call per torrent, which is slow for large
+	// libraries.
+	Trackers bool
+}
+
+// List returns every torrent, leaving Tracker unset unless options ask for it.
+func (r *Rtorrent) List(options ListOptions) (Torrents, error) {
+	return r.ListContext(context.Background(), options)
+}
+
+// ListContext is List with a context.
+func (r *Rtorrent) ListContext(ctx context.Context, options ListOptions) (Torrents, error) {
+	rows, err := r.downloadMulticall(ctx, torrentFields)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := r.execute(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	values, err := resp.arrayParam()
-	if err != nil {
-		return nil, err
-	}
-
-	torrents := make(Torrents, 0, len(values))
-	for _, torrentValue := range values {
-		torrent, err := parseTorrent(torrentValue)
+	torrents := make(Torrents, 0, len(rows))
+	for _, row := range rows {
+		torrent, err := parseTorrent(row)
 		if err != nil {
 			return nil, err
 		}
 		torrents = append(torrents, torrent)
 	}
-
-	// set the Tracker field
-	if err := r.getTrackers(ctx, torrents); err != nil {
-		return nil, err
+	if options.Trackers {
+		if err := r.getTrackers(ctx, torrents); err != nil {
+			return nil, err
+		}
 	}
-
 	return torrents, nil
 }
+
+// Trackers sets the Tracker of each of ts, for torrents listed without them.
+func (r *Rtorrent) Trackers(ts Torrents) error {
+	return r.TrackersContext(context.Background(), ts)
+}
+
+// TrackersContext is Trackers with a context.
+func (r *Rtorrent) TrackersContext(ctx context.Context, ts Torrents) error {
+	if _, err := torrentHashes(ts); err != nil {
+		return err
+	}
+	return r.getTrackers(ctx, ts)
+}
+
+// Hashes returns the info-hash of every torrent, which is much cheaper than
+// listing them for finding out which are loaded.
+func (r *Rtorrent) Hashes() ([]string, error) {
+	return r.HashesContext(context.Background())
+}
+
+// HashesContext is Hashes with a context.
+func (r *Rtorrent) HashesContext(ctx context.Context) ([]string, error) {
+	rows, err := r.downloadMulticall(ctx, []string{"d.hash"})
+	if err != nil {
+		return nil, err
+	}
+	hashes := make([]string, len(rows))
+	for i, row := range rows {
+		hash, err := row.firstArrayValue()
+		if err == nil {
+			hashes[i], err = hash.stringValue()
+		}
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent hash: %w", err)
+		}
+	}
+	return hashes, nil
+}
+
+// downloadMulticall returns fields of every torrent, a row per torrent.
+// rTorrent plans to drop d.multicall2, an alias of d.multicall since 0.16, so
+// a client whose rTorrent answers that it has no d.multicall2 switches.
+func (r *Rtorrent) downloadMulticall(ctx context.Context, fields []string) ([]xmlrpcValue, error) {
+	method := "d.multicall2"
+	if atomic.LoadInt32(&r.renamedMulticall) != 0 {
+		method = "d.multicall"
+	}
+	req, err := buildDownloadMulticall(method, fields)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.execute(ctx, req)
+	var fault *XMLRPCFault
+	if method == "d.multicall2" && errors.As(err, &fault) && fault.Code == noSuchMethod {
+		atomic.StoreInt32(&r.renamedMulticall, 1)
+		return r.downloadMulticall(ctx, fields)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return resp.arrayParam()
+}
+
+// noSuchMethod is the fault code of a call to a method rTorrent does not have.
+const noSuchMethod = -506
 
 func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 	fields, err := value.arrayValues()
@@ -1277,12 +1502,13 @@ func (r *Rtorrent) send(ctx context.Context, data []byte) (io.ReadCloser, error)
 	return response, nil
 }
 
-// post sends an XML-RPC request over HTTP and returns the response body. It
-// uses http.DefaultClient, which honors HTTPS_PROXY and, on Unix, SSL_CERT_FILE.
-func (r *Rtorrent) post(ctx context.Context, req string) (io.ReadCloser, error) {
+// post sends an XML-RPC request over HTTP and returns the response body and
+// its length, or -1 when unknown. It uses http.DefaultClient, which honors
+// HTTPS_PROXY and, on Unix, SSL_CERT_FILE.
+func (r *Rtorrent) post(ctx context.Context, req string) (io.ReadCloser, int64, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, strings.NewReader(req))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	request.Header.Set("Content-Type", "text/xml")
 	if r.username != "" || r.password != "" {
@@ -1290,13 +1516,13 @@ func (r *Rtorrent) post(ctx context.Context, req string) (io.ReadCloser, error) 
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
-		return nil, fmt.Errorf("POST %s: %s", r.address, response.Status)
+		return nil, 0, fmt.Errorf("POST %s: %s", r.address, response.Status)
 	}
-	return response.Body, nil
+	return response.Body, response.ContentLength, nil
 }
 
 type scgiResponse struct {
@@ -1332,5 +1558,5 @@ func writeAll(w io.Writer, data []byte) (int, error) {
 func encode(data string) []byte {
 	headers := fmt.Sprintf("CONTENT_LENGTH%c%d%cSCGI%c1%c", 0, len(data), 0, 0, 0)
 	headers = fmt.Sprintf("%d:%s,", len(headers), headers)
-	return []byte(headers + data)
+	return append(append(make([]byte, 0, len(headers)+len(data)), headers...), data...)
 }
