@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -165,10 +166,14 @@ type DotTorrentWithOptions struct {
 	Label string
 }
 
-// Rtorrent holds the network and address e.g.'tcp|localhost:5000' or 'unix|path/to/socket'.
+// Rtorrent is a client for one rTorrent instance, reached over SCGI (a Unix
+// socket or host:port) or over HTTP(S) XML-RPC.
 type Rtorrent struct {
 	network, address string
-	Version          string
+	// endpoint and its credentials are set for http and https addresses.
+	endpoint           *url.URL
+	username, password string
+	Version            string
 	// Timeout bounds each request, from dialing to reading the response.
 	// Non-positive values use DefaultTimeout.
 	Timeout time.Duration
@@ -176,7 +181,10 @@ type Rtorrent struct {
 	MaxResponseSize int64
 }
 
-// NewRtorrent takes the address, defined in .rtorrent.rc
+// NewRtorrent connects to rTorrent at address: the path of an SCGI Unix
+// socket, an SCGI host:port, or an http:// or https:// XML-RPC URL such as
+// https://user:password@seedbox.example/RPC2. Credentials in a URL are sent
+// with HTTP basic authentication.
 func NewRtorrent(address string) (*Rtorrent, error) {
 	return NewRtorrentContext(context.Background(), address)
 }
@@ -187,17 +195,26 @@ func NewRtorrentContext(ctx context.Context, address string) (*Rtorrent, error) 
 		return nil, fmt.Errorf("rtapi: address must not be empty")
 	}
 
-	network := "tcp"
-
-	if _, err := os.Stat(address); err == nil {
-		network = "unix"
-	}
-
 	rt := &Rtorrent{
-		network:         network,
+		network:         "tcp",
 		address:         address,
 		Timeout:         DefaultTimeout,
 		MaxResponseSize: DefaultMaxResponseSize,
+	}
+	if endpoint, err := url.Parse(address); err == nil &&
+		(strings.EqualFold(endpoint.Scheme, "http") || strings.EqualFold(endpoint.Scheme, "https")) {
+		if endpoint.Host == "" {
+			return nil, fmt.Errorf("rtapi: %s address has no host", endpoint.Scheme)
+		}
+		if endpoint.User != nil {
+			rt.username = endpoint.User.Username()
+			rt.password, _ = endpoint.User.Password()
+			endpoint.User = nil // keep credentials out of errors
+		}
+		rt.endpoint = endpoint
+		rt.network, rt.address = "http", endpoint.String()
+	} else if _, err := os.Stat(address); err == nil {
+		rt.network = "unix"
 	}
 
 	ver, err := rt.getVersion(ctx)
@@ -533,7 +550,13 @@ func (r *Rtorrent) execute(ctx context.Context, req string) (*xmlrpcMethodRespon
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	body, err := r.send(ctx, encode(req))
+	var body io.ReadCloser
+	var err error
+	if r.endpoint != nil {
+		body, err = r.post(ctx, req)
+	} else {
+		body, err = r.send(ctx, encode(req))
+	}
 	if err != nil {
 		return nil, contextError(ctx, fmt.Errorf("rtapi: send request: %w", err))
 	}
@@ -1222,6 +1245,28 @@ func (r *Rtorrent) send(ctx context.Context, data []byte) (io.ReadCloser, error)
 	}
 
 	return response, nil
+}
+
+// post sends an XML-RPC request over HTTP and returns the response body. It
+// uses http.DefaultClient, which honors HTTPS_PROXY and, on Unix, SSL_CERT_FILE.
+func (r *Rtorrent) post(ctx context.Context, req string) (io.ReadCloser, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, strings.NewReader(req))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "text/xml")
+	if r.username != "" || r.password != "" {
+		request.SetBasicAuth(r.username, r.password)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		return nil, fmt.Errorf("POST %s: %s", r.address, response.Status)
+	}
+	return response.Body, nil
 }
 
 type scgiResponse struct {

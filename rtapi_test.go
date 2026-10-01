@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -556,6 +559,89 @@ func TestResponseBoundsTimeoutAndImplicitString(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 500*time.Millisecond {
 		t.Fatalf("expected bounded timeout, got %v after %s", err, time.Since(started))
 	}
+}
+
+// httpRTorrent serves XML-RPC over HTTP at /RPC2 for the given credentials,
+// answering the version handshake, the torrent list, and trackers.
+func httpRTorrent(t *testing.T, user, password string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPassword, ok := r.BasicAuth()
+		if !ok || gotUser != user || gotPassword != password {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/RPC2" || r.Header.Get("Content-Type") != "text/xml" {
+			t.Errorf("unexpected request: %s %s %q", r.Method, r.URL.Path, r.Header.Get("Content-Type"))
+		}
+		var call xmlrpcMethodCall
+		if err := xml.NewDecoder(r.Body).Decode(&call); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		var scgi string
+		switch {
+		case call.MethodName == "d.multicall2":
+			scgi = arrayResponse(torrentRow("over-http", testHash))
+		case nestedMethod(call) == "system.client_version":
+			scgi = versionResponse()
+		default:
+			scgi = arrayResponse(result(stringValue("https://tracker.invalid/announce")))
+		}
+		// HTTP responses carry the XML without SCGI's status lines.
+		io.WriteString(w, scgi[strings.Index(scgi, "<?xml"):])
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestHTTPTransportPostsXMLRPCWithBasicAuth(t *testing.T) {
+	const password = "p@ss:word/1"
+	server := httpRTorrent(t, "alice", password)
+	address, _ := url.Parse(server.URL + "/RPC2")
+	address.User = url.UserPassword("alice", password)
+
+	client, err := NewRtorrent(address.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Version != "0.9.8/0.13.8" {
+		t.Fatalf("version = %q", client.Version)
+	}
+	torrents, err := client.Torrents()
+	if err != nil || len(torrents) != 1 || torrents[0].Name != "over-http" || torrents[0].Tracker == nil {
+		t.Fatalf("torrents = %v, %v", torrents, err)
+	}
+
+	address.User = url.UserPassword("alice", "wrong-"+password)
+	_, err = NewRtorrent(address.String())
+	if err == nil || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), password) {
+		t.Fatalf("expected a 401 without the password, got %v", err)
+	}
+
+	server.Close()
+	address.User = url.UserPassword("alice", password)
+	_, err = NewRtorrent(address.String())
+	if err == nil || strings.Contains(err.Error(), password) || strings.Contains(err.Error(), url.QueryEscape(password)) {
+		t.Fatalf("expected a connection error without the password, got %v", err)
+	}
+}
+
+func TestAddressSelectsTransport(t *testing.T) {
+	for _, address := range []string{"localhost:5000", "127.0.0.1:5000", "rtorrent.invalid:5000"} {
+		_, err := NewRtorrentContext(canceledContext(), address)
+		if err == nil || !strings.Contains(err.Error(), "dial tcp") {
+			t.Errorf("%s: expected an SCGI dial, got %v", address, err)
+		}
+	}
+	if _, err := NewRtorrent("https:///RPC2"); err == nil || !strings.Contains(err.Error(), "no host") {
+		t.Fatalf("expected a missing-host error, got %v", err)
+	}
+}
+
+func canceledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
 }
 
 func TestContextCancellationInterruptsRequests(t *testing.T) {

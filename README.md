@@ -49,7 +49,16 @@ func main() {
 }
 ```
 
-TCP addresses such as `127.0.0.1:5000` are also accepted. Every SCGI request is
+TCP addresses such as `127.0.0.1:5000` are also accepted, as are `http://` and
+`https://` XML-RPC URLs for rTorrent behind a web server, such as
+`https://user:password@seedbox.example/RPC2`. Credentials in the URL are sent
+with HTTP basic authentication and kept out of error messages; requests use
+`http.DefaultClient`, which honors `HTTPS_PROXY`.
+
+Every method has a `...Context` variant, such as `TorrentsContext`, and
+`NewRtorrentContext`. Cancelling the context interrupts the request.
+Cancellations and timeouts match `context.Canceled` and
+`context.DeadlineExceeded` with `errors.Is`. Every SCGI request is
 bounded by `rtapi.DefaultTimeout` (30 seconds) unless `Rtorrent.Timeout` is set.
 Responses default to a 16 MiB safety bound; set `Rtorrent.MaxResponseSize` when
 a legitimately large library needs more. Transport errors, malformed responses,
