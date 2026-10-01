@@ -24,6 +24,12 @@ var _ interface {
 	DeleteMetadataContext(context.Context, ...*rtapi.Torrent) error
 	SpeedsContext(context.Context) (uint64, uint64, error)
 	StatsContext(context.Context) (*rtapi.Stats, error)
+
+	FilesContext(context.Context, string) ([]rtapi.File, error)
+	SetFilePrioritiesContext(context.Context, string, map[int]rtapi.FilePriority) error
+	GlobalLimitsContext(context.Context) (uint64, uint64, error)
+	SetGlobalLimitsContext(context.Context, uint64, uint64) error
+	FreeDiskSpaceContext(context.Context, string) (uint64, error)
 } = (*rtapi.Rtorrent)(nil)
 
 var _ func(context.Context, string) (*rtapi.Rtorrent, error) = rtapi.NewRtorrentContext

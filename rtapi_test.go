@@ -275,6 +275,7 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 <value><i8>0</i8></value><value><string>leech</string></value><value><i8>0</i8></value>
 <value><i8>0</i8></value><value><string>label</string></value>
 <value><string>/remote/dir</string></value><value><i8>1</i8></value>
+<value><i8>1700000000</i8></value>
 </data></array></value>`
 	var value xmlrpcValue
 	if err := xml.Unmarshal([]byte(fragment), &value); err != nil {
@@ -290,7 +291,7 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 	if torrent.Ratio != 1.3 || torrent.ETA != 1 || torrent.Message != "implicit message" {
 		t.Fatalf("unexpected derived values: %#v", torrent)
 	}
-	if torrent.Directory != "/remote/dir" || !torrent.MultiFile {
+	if torrent.Directory != "/remote/dir" || !torrent.MultiFile || torrent.Finished != 1700000000 {
 		t.Fatalf("unexpected data location: %#v", torrent)
 	}
 }
@@ -538,7 +539,7 @@ func torrentValues(name, hash string) []string {
 		intValue(1), intValue(1), intValue(0), intValue(0), intValue(1),
 		stringValue(""), stringValue("/remote/" + name), intValue(0),
 		stringValue("leech"), intValue(1), intValue(0), stringValue(""),
-		stringValue("/remote/" + name), intValue(1),
+		stringValue("/remote/" + name), intValue(1), intValue(1700000000),
 	}
 }
 
@@ -560,7 +561,11 @@ func nestedCalls(call xmlrpcMethodCall) []nestedCall {
 				nested.method = *member.Value.String
 			case "params":
 				for _, param := range member.Value.Array.Values {
-					nested.params = append(nested.params, *param.String)
+					if param.I8 != nil {
+						nested.params = append(nested.params, strconv.FormatInt(*param.I8, 10))
+					} else {
+						nested.params = append(nested.params, *param.String)
+					}
 				}
 			}
 		}

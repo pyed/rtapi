@@ -64,6 +64,7 @@ type Torrent struct {
 	// a single-file torrent's file.
 	Directory string
 	MultiFile bool
+	Finished  uint64 // when the torrent completed, in Unix seconds; 0 until it has
 }
 
 // Torrents is a slice of *Torrent.
@@ -143,6 +144,18 @@ func newStringMember(name, val string) xmlrpcMember {
 
 func newArrayMember(name string, values ...xmlrpcValue) xmlrpcMember {
 	return xmlrpcMember{Name: name, Value: newArrayValue(values...)}
+}
+
+func newIntValue(val int64) xmlrpcValue {
+	return xmlrpcValue{I8: &val}
+}
+
+// newMethodCallValues is newMethodCall for parameters that are not all strings.
+func newMethodCallValues(method string, params ...xmlrpcValue) xmlrpcValue {
+	return newStructValue(
+		newStringMember("methodName", method),
+		newArrayMember("params", params...),
+	)
 }
 
 func newMethodCall(method string, params ...string) xmlrpcValue {
@@ -248,6 +261,7 @@ var torrentFields = []string{
 	"d.custom1",
 	"d.directory",
 	"d.is_multi_file",
+	"d.timestamp.finished",
 }
 
 func buildTorrentsRequest() (string, error) {
@@ -696,6 +710,9 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 		return nil, fmt.Errorf("rtapi: parse torrent multi-file flag: %w", err)
 	}
 	t.MultiFile = multiFile != 0
+	if t.Finished, err = fields[18].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent finished time: %w", err)
+	}
 
 	switch {
 	case isActive == 1 && len(t.Message) != 0:
@@ -774,6 +791,45 @@ func (r *Rtorrent) GetTorrentContext(ctx context.Context, hash string) (*Torrent
 		return nil, fmt.Errorf("rtapi: get tracker: %w", err)
 	}
 	return torrent, nil
+}
+
+// call sends one method call and returns its result.
+func (r *Rtorrent) call(ctx context.Context, method string, params ...xmlrpcValue) (xmlrpcValue, error) {
+	call := xmlrpcMethodCall{MethodName: method}
+	for _, param := range params {
+		call.Params = append(call.Params, xmlrpcParam{Value: param})
+	}
+	req, err := marshalMethodCall(call)
+	if err != nil {
+		return xmlrpcValue{}, err
+	}
+	resp, err := r.execute(ctx, req)
+	if err != nil {
+		return xmlrpcValue{}, err
+	}
+	return resp.Params[0].Value, nil
+}
+
+// FreeDiskSpace returns the free space, in bytes, on the filesystem holding a
+// torrent's data.
+func (r *Rtorrent) FreeDiskSpace(hash string) (uint64, error) {
+	return r.FreeDiskSpaceContext(context.Background(), hash)
+}
+
+// FreeDiskSpaceContext is FreeDiskSpace with a context.
+func (r *Rtorrent) FreeDiskSpaceContext(ctx context.Context, hash string) (uint64, error) {
+	if strings.TrimSpace(hash) == "" {
+		return 0, fmt.Errorf("rtapi: torrent hash must not be empty")
+	}
+	value, err := r.call(ctx, "d.free_diskspace", newStringValue(hash))
+	if err != nil {
+		return 0, fmt.Errorf("rtapi: free disk space: %w", err)
+	}
+	free, err := value.uint64Value()
+	if err != nil {
+		return 0, fmt.Errorf("rtapi: parse free disk space: %w", err)
+	}
+	return free, nil
 }
 
 // Download takes URL to a .torrent file to start downloading it.

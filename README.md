@@ -79,6 +79,12 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   empty `Dir` or `Label` leaves rTorrent's default. URL loads use rTorrent's
   verbose load commands, so rTorrent logs why a link failed to load.
 - `GetTorrent` requests only the one torrent rather than listing them all.
+- `Torrent.Finished` is when a torrent completed, in Unix seconds.
+- `Files` lists a torrent's files, and `SetFilePriorities` skips or prioritizes
+  them by index (`FileSkip`, `FileNormal`, `FileHigh`).
+- `GlobalLimits` and `SetGlobalLimits` read and set the global download and
+  upload rate limits, in bytes per second; zero means unlimited.
+- `FreeDiskSpace` reports the free space on the filesystem holding a torrent.
 - `Torrents.Sort` takes an explicit `rtapi.Sorting` value. The unsafe
   process-global `CurrentSorting` variable was removed; call `Sort` on each
   returned value instead. Sorting is stable and compares names
