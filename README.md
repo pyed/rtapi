@@ -89,6 +89,8 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 - `GlobalLimits` and `SetGlobalLimits` read and set the global download and
   upload rate limits, in bytes per second; zero means unlimited.
 - `FreeDiskSpace` reports the free space on the filesystem holding a torrent.
+  rTorrent knows where that is only for torrents it has opened, such as
+  active ones, and reports 0 for the rest.
 - `Torrents.Sort` takes an explicit `rtapi.Sorting` value. Sorting is stable
   and compares names case-insensitively.
 - `DeleteMetadata` erases torrents from rTorrent and checks that rTorrent

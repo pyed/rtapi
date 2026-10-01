@@ -84,7 +84,7 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	multi, multiHash := testTorrent(map[string]any{"name": "multi folder", "files": []any{
 		map[string]any{"length": 10, "path": []any{"a.txt"}},
 		map[string]any{"length": 20, "path": []any{"sub", "b.txt"}},
-	}}, "")
+	}}, "http://other.invalid/announce")
 	for _, data := range [][]byte{single, multi} {
 		if err := rt.DownloadRawContext(ctx, data, &DotTorrentWithOptions{Stopped: true, Dir: dir, Label: "rtapi test"}); err != nil {
 			t.Fatal(err)
@@ -206,11 +206,18 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	if _, _, err := rt.SpeedsContext(ctx); err != nil {
 		t.Error(err)
 	}
-	if free, err := rt.FreeDiskSpaceContext(ctx, singleHash); err != nil || free == 0 {
-		t.Errorf("free disk space = %d, %v", free, err)
+	// rTorrent learns where a torrent's data is only when it opens the
+	// torrent, so until then it reports no free space.
+	if free, err := rt.FreeDiskSpaceContext(ctx, singleHash); err != nil || free != 0 {
+		t.Errorf("free disk space of an unopened torrent = %d, %v; want 0", free, err)
 	}
-
-	for _, mutate := range []func(context.Context, ...*Torrent) error{rt.StartContext, rt.StopContext, rt.CheckContext} {
+	if err := rt.StartContext(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if free, err := rt.FreeDiskSpaceContext(ctx, singleHash); err != nil || free == 0 {
+		t.Errorf("free disk space of a started torrent = %d, %v", free, err)
+	}
+	for _, mutate := range []func(context.Context, ...*Torrent) error{rt.StopContext, rt.CheckContext} {
 		if err := mutate(ctx, s); err != nil {
 			t.Error(err)
 		}

@@ -1032,7 +1032,8 @@ func (r *Rtorrent) call(ctx context.Context, method string, params ...xmlrpcValu
 }
 
 // FreeDiskSpace returns the free space, in bytes, on the filesystem holding a
-// torrent's data.
+// torrent's data. rTorrent learns where that is when it opens the torrent,
+// as it does to start it, and reports 0 for torrents it has not opened.
 func (r *Rtorrent) FreeDiskSpace(hash string) (uint64, error) {
 	return r.FreeDiskSpaceContext(context.Background(), hash)
 }
