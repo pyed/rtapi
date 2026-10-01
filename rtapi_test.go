@@ -719,16 +719,19 @@ func TestHTTPTransportPostsXMLRPCWithBasicAuth(t *testing.T) {
 		t.Fatalf("torrents = %v, %v", torrents, err)
 	}
 
+	leaks := func(err error, password string) bool {
+		return strings.Contains(err.Error(), password) || strings.Contains(err.Error(), url.QueryEscape(password))
+	}
 	address.User = url.UserPassword("alice", "wrong-"+password)
 	_, err = NewRtorrent(address.String())
-	if err == nil || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), password) {
+	if err == nil || !strings.Contains(err.Error(), "401") || leaks(err, password) {
 		t.Fatalf("expected a 401 without the password, got %v", err)
 	}
 
 	server.Close()
 	address.User = url.UserPassword("alice", password)
 	_, err = NewRtorrent(address.String())
-	if err == nil || strings.Contains(err.Error(), password) || strings.Contains(err.Error(), url.QueryEscape(password)) {
+	if err == nil || leaks(err, password) {
 		t.Fatalf("expected a connection error without the password, got %v", err)
 	}
 }
