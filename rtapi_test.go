@@ -506,14 +506,97 @@ func TestTrackerMissingRequiresFaultCode(t *testing.T) {
 	}
 }
 
-func torrentRow(name, hash string) string {
-	fields := []string{
+// torrentValues are the field values of a complete, stopped torrent, in
+// torrentFields order.
+func torrentValues(name, hash string) []string {
+	return []string{
 		stringValue(name), stringValue(hash), intValue(0), intValue(0),
 		intValue(1), intValue(1), intValue(0), intValue(0), intValue(1),
 		stringValue(""), stringValue("/remote/" + name), intValue(0),
 		stringValue("leech"), intValue(1), intValue(0), stringValue(""),
 		stringValue("/remote/" + name), intValue(1),
 	}
+}
+
+type nestedCall struct {
+	method string
+	params []string
+}
+
+func nestedCalls(call xmlrpcMethodCall) []nestedCall {
+	if call.MethodName != "system.multicall" || len(call.Params) == 0 || call.Params[0].Value.Array == nil {
+		return nil
+	}
+	var calls []nestedCall
+	for _, value := range call.Params[0].Value.Array.Values {
+		var nested nestedCall
+		for _, member := range value.Struct.Members {
+			switch member.Name {
+			case "methodName":
+				nested.method = *member.Value.String
+			case "params":
+				for _, param := range member.Value.Array.Values {
+					nested.params = append(nested.params, *param.String)
+				}
+			}
+		}
+		calls = append(calls, nested)
+	}
+	return calls
+}
+
+func TestGetTorrentRequestsOnlyThatTorrent(t *testing.T) {
+	var requests atomic.Int32
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		requests.Add(1)
+		calls := nestedCalls(call)
+		if len(calls) != len(torrentFields)+1 {
+			t.Errorf("got %d calls, want %d", len(calls), len(torrentFields)+1)
+			return topLevelFault(-1, "unexpected")
+		}
+		values := torrentValues("wanted", testHash)
+		results := make([]string, len(calls))
+		for i, nested := range calls {
+			switch {
+			case i < len(torrentFields) && nested.method == torrentFields[i] && nested.params[0] == testHash:
+				results[i] = result(values[i])
+			case i < len(torrentFields) && nested.params[0] == strings.Repeat("F", 40):
+				results[i] = fault(-501, "Could not find info-hash.")
+			case i < len(torrentFields) && nested.params[0] == strings.Repeat("E", 40):
+				results[i] = fault(-503, "permission denied")
+			case i == len(torrentFields) && nested.method == "t.url" && nested.params[0] == testHash+":t0":
+				results[i] = result(stringValue("udp://tracker.invalid:80"))
+			case i == len(torrentFields):
+				results[i] = fault(-501, "Could not find info-hash.")
+			default:
+				t.Errorf("unexpected call %d: %+v", i, nested)
+			}
+		}
+		return arrayResponse(results...)
+	})
+
+	torrent, err := client.GetTorrent(testHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if torrent.Name != "wanted" || torrent.Hash != testHash || torrent.Tracker == nil || torrent.Tracker.Host != "tracker.invalid:80" {
+		t.Fatalf("torrent = %+v", torrent)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("GetTorrent made %d requests", requests.Load())
+	}
+
+	if _, err := client.GetTorrent(strings.Repeat("F", 40)); err == nil || !strings.Contains(err.Error(), "no torrent with hash") {
+		t.Fatalf("expected a missing-torrent error, got %v", err)
+	}
+	var rpcFault *XMLRPCFault
+	if _, err := client.GetTorrent(strings.Repeat("E", 40)); !errors.As(err, &rpcFault) || rpcFault.Code != -503 {
+		t.Fatalf("expected the field fault, got %v", err)
+	}
+}
+
+func torrentRow(name, hash string) string {
+	fields := torrentValues(name, hash)
 	var body strings.Builder
 	body.WriteString("<array><data>")
 	for _, field := range fields {

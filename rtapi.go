@@ -226,33 +226,32 @@ func NewRtorrentContext(ctx context.Context, address string) (*Rtorrent, error) 
 	return rt, nil
 }
 
-func buildTorrentsRequest() (string, error) {
-	fields := []string{
-		"",
-		"main",
-		"d.name=",
-		"d.hash=",
-		"d.down.rate=",
-		"d.up.rate=",
-		"d.size_bytes=",
-		"d.completed_bytes=",
-		"d.ratio=",
-		"d.up.total=",
-		"d.load_date=",
-		"d.message=",
-		"d.base_path=",
-		"d.is_active=",
-		"d.connection_current=",
-		"d.complete=",
-		"d.hashing=",
-		"d.custom1=",
-		"d.directory=",
-		"d.is_multi_file=",
-	}
+// torrentFields are the d.* getters parseTorrent reads, in order.
+var torrentFields = []string{
+	"d.name",
+	"d.hash",
+	"d.down.rate",
+	"d.up.rate",
+	"d.size_bytes",
+	"d.completed_bytes",
+	"d.ratio",
+	"d.up.total",
+	"d.load_date",
+	"d.message",
+	"d.base_path",
+	"d.is_active",
+	"d.connection_current",
+	"d.complete",
+	"d.hashing",
+	"d.custom1",
+	"d.directory",
+	"d.is_multi_file",
+}
 
-	params := make([]xmlrpcParam, 0, len(fields))
-	for _, field := range fields {
-		params = append(params, newStringParam(field))
+func buildTorrentsRequest() (string, error) {
+	params := []xmlrpcParam{newStringParam(""), newStringParam("main")}
+	for _, field := range torrentFields {
+		params = append(params, newStringParam(field+"="))
 	}
 
 	request := xmlrpcMethodCall{
@@ -653,7 +652,7 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 		return nil, fmt.Errorf("rtapi: parse torrent: %w", err)
 	}
 
-	const expectedFields = 18
+	expectedFields := len(torrentFields)
 	if len(fields) < expectedFields {
 		return nil, fmt.Errorf("rtapi: expected %d torrent fields, got %d", expectedFields, len(fields))
 	}
@@ -756,17 +755,55 @@ func (r *Rtorrent) GetTorrentContext(ctx context.Context, hash string) (*Torrent
 	if strings.TrimSpace(hash) == "" {
 		return nil, fmt.Errorf("rtapi: torrent hash must not be empty")
 	}
-	torrents, err := r.TorrentsContext(ctx)
+	// Ask for this torrent's fields and tracker alone, rather than listing
+	// every torrent.
+	calls := make([]xmlrpcValue, 0, len(torrentFields)+1)
+	for _, field := range torrentFields {
+		calls = append(calls, newMethodCall(field, hash))
+	}
+	calls = append(calls, newMethodCall("t.url", hash+":t0"))
+	req, err := marshalMethodCall(xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params:     []xmlrpcParam{{Value: newArrayValue(calls...)}},
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	for i := range torrents {
-		if torrents[i].Hash == hash {
-			return torrents[i], nil
+	resp, err := r.execute(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	values, err := resp.arrayParam()
+	if err != nil {
+		return nil, err
+	}
+	if len(values) != len(calls) {
+		return nil, fmt.Errorf("rtapi: expected %d XML-RPC multicall results, got %d", len(calls), len(values))
+	}
+
+	fields := make([]xmlrpcValue, len(torrentFields))
+	for i, field := range torrentFields {
+		if fault, ok, err := faultFromValue(values[i]); err != nil {
+			return nil, fmt.Errorf("rtapi: decode %s fault: %w", field, err)
+		} else if ok {
+			if isMissingTarget(fault) {
+				return nil, fmt.Errorf("rtapi: no torrent with hash %q", hash)
+			}
+			return nil, fmt.Errorf("rtapi: get %s: %w", field, fault)
+		}
+		if fields[i], err = values[i].firstArrayValue(); err != nil {
+			return nil, fmt.Errorf("rtapi: parse %s: %w", field, err)
 		}
 	}
-	return nil, fmt.Errorf("rtapi: no torrent with hash %q", hash)
+	torrent, err := parseTorrent(xmlrpcValue{Array: &xmlrpcArray{Values: fields}})
+	if err != nil {
+		return nil, err
+	}
+	if torrent.Tracker, err = parseTracker(values[len(torrentFields)]); err != nil {
+		return nil, fmt.Errorf("rtapi: get tracker: %w", err)
+	}
+	return torrent, nil
 }
 
 // Download takes URL to a .torrent file to start downloading it.
@@ -1138,8 +1175,6 @@ func (r *Rtorrent) getTrackers(ctx context.Context, ts Torrents) error {
 		return err
 	}
 
-	// Trackerless torrents can return a per-call missing-target fault for t.url.
-	// Handle that expected absence locally while preserving every other fault.
 	resp, err := r.execute(ctx, req)
 	if err != nil {
 		return err
@@ -1155,43 +1190,52 @@ func (r *Rtorrent) getTrackers(ctx context.Context, ts Torrents) error {
 	}
 
 	for i, trackerValue := range values {
-		if fault, ok, err := faultFromValue(trackerValue); err != nil {
-			return fmt.Errorf("rtapi: decode tracker %d fault: %w", i, err)
-		} else if ok {
-			message := strings.ToLower(fault.Message)
-			missing := fault.Code == -501 &&
-				(strings.Contains(message, "info-hash") ||
-					strings.Contains(message, "could not find tracker") || strings.Contains(message, "no tracker"))
-			if missing {
-				continue
-			}
-			return fmt.Errorf("rtapi: get tracker %d: %w", i, fault)
+		if ts[i].Tracker, err = parseTracker(trackerValue); err != nil {
+			return fmt.Errorf("rtapi: get tracker %d: %w", i, err)
 		}
-
-		trackerValues, err := trackerValue.arrayValues()
-		if err != nil {
-			return err
-		}
-
-		var trackerStr string
-		if len(trackerValues) > 0 {
-			trackerStr, err = trackerValues[0].stringValue()
-			if err != nil {
-				return err
-			}
-		}
-
-		if trackerStr == "" {
-			continue
-		}
-		trackerURL, err := url.Parse(trackerStr)
-		if err != nil {
-			return fmt.Errorf("rtapi: parse tracker url: %w", err)
-		}
-		ts[i].Tracker = trackerURL
 	}
 
 	return nil
+}
+
+// parseTracker reads one t.url result. Trackerless torrents, and torrents
+// removed since they were listed, answer with a missing-target fault, which is
+// reported as no tracker; every other fault is returned.
+func parseTracker(value xmlrpcValue) (*url.URL, error) {
+	if fault, ok, err := faultFromValue(value); err != nil {
+		return nil, fmt.Errorf("decode fault: %w", err)
+	} else if ok {
+		message := strings.ToLower(fault.Message)
+		if isMissingTarget(fault) || (fault.Code == -501 &&
+			(strings.Contains(message, "could not find tracker") || strings.Contains(message, "no tracker"))) {
+			return nil, nil
+		}
+		return nil, fault
+	}
+
+	trackerValues, err := value.arrayValues()
+	if err != nil {
+		return nil, err
+	}
+	var trackerStr string
+	if len(trackerValues) > 0 {
+		if trackerStr, err = trackerValues[0].stringValue(); err != nil {
+			return nil, err
+		}
+	}
+	if trackerStr == "" {
+		return nil, nil
+	}
+	trackerURL, err := url.Parse(trackerStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse tracker url: %w", err)
+	}
+	return trackerURL, nil
+}
+
+// isMissingTarget reports rTorrent's fault for a hash it has not loaded.
+func isMissingTarget(fault *XMLRPCFault) bool {
+	return fault.Code == -501 && strings.Contains(strings.ToLower(fault.Message), "info-hash")
 }
 
 // calcPercentAndETA takes size, size done, down rate to calculate the percenage + ETA.
