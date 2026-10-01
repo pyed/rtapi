@@ -47,3 +47,38 @@ jobs:
           repo-checkout: false
           go-version-input: "1.26.7"
           go-package: ./...
+
+  rtorrent:
+    name: Against rTorrent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.7"
+          cache: false
+      - name: Start rTorrent
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rtorrent
+          rt="$RUNNER_TEMP/rtorrent"
+          mkdir -p "$rt/session" "$rt/downloads"
+          cat > "$rt/rtorrent.rc" <<RC
+          directory.default.set = $rt/downloads
+          session.path.set = $rt/session
+          network.scgi.open_local = $rt/rpc.socket
+          network.port_range.set = 50000-50010
+          dht.mode.set = disable
+          protocol.pex.set = no
+          trackers.use_udp.set = no
+          system.daemon.set = true
+          RC
+          rtorrent -n -o import="$rt/rtorrent.rc" > "$rt/output.log" 2>&1 &
+          for _ in $(seq 100); do [ -S "$rt/rpc.socket" ] && exit 0; sleep 0.1; done
+          cat "$rt/output.log"
+          exit 1
+      - name: Test against rTorrent
+        env:
+          RTAPI_TEST_RTORRENT: ${{ runner.temp }}/rtorrent/rpc.socket
+        run: go test -count=1 -run Integration -v ./...
