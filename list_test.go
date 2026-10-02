@@ -196,3 +196,35 @@ func TestReadResponseSizesBufferFromStatedLength(t *testing.T) {
 		t.Fatalf("decodeMethodResponse over the limit = %v", err)
 	}
 }
+
+// Times come from the fields that keep them: when a torrent finished and
+// first started, which survive an rTorrent restart, and when it was loaded,
+// which does not.
+func TestListReadsEachTimeFromItsField(t *testing.T) {
+	times := map[string]string{
+		"d.load_date=":          intValue(12),
+		"d.timestamp.finished=": intValue(1700000005),
+		"d.timestamp.started=":  intValue(1690000005),
+	}
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		values := torrentValues("timed", testHash)
+		var row strings.Builder
+		row.WriteString("<array><data>")
+		for i, param := range call.Params[2:] {
+			value := values[i]
+			if timed, ok := times[*param.Value.String]; ok {
+				value = timed
+			}
+			row.WriteString("<value>" + value + "</value>")
+		}
+		row.WriteString("</data></array>")
+		return arrayResponse(row.String())
+	})
+	torrents, err := client.List(ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := torrents[0]; got.Age != 12 || got.Finished != 1700000005 || got.Started != 1690000005 {
+		t.Fatalf("Age, Finished, Started = %d, %d, %d", got.Age, got.Finished, got.Started)
+	}
+}

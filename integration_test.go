@@ -94,21 +94,7 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 		rt.DeleteMetadata(&Torrent{Hash: singleHash}, &Torrent{Hash: multiHash})
 	})
 
-	// rTorrent loads in the background.
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		hashes, err := rt.HashesContext(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if slices.Contains(hashes, singleHash) && slices.Contains(hashes, multiHash) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the torrents did not load; loaded: %v", hashes)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	waitLoaded(t, rt, singleHash, multiHash)
 
 	// rTorrent's own responses take the fast decoding path.
 	req, err := buildTorrentsRequest()
@@ -151,6 +137,10 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	}
 	if s.Directory != dir {
 		t.Errorf("single-file directory = %q, want %q", s.Directory, dir)
+	}
+	// Torrents loaded stopped have not started yet.
+	if s.Age == 0 || s.Started != 0 {
+		t.Errorf("loaded stopped: Age = %d, Started = %d; want Age set and Started 0", s.Age, s.Started)
 	}
 	if err := rt.TrackersContext(ctx, Torrents{s, m}); err != nil {
 		t.Fatal(err)
@@ -217,6 +207,9 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	if free, err := rt.FreeDiskSpaceContext(ctx, singleHash); err != nil || free == 0 {
 		t.Errorf("free disk space of a started torrent = %d, %v", free, err)
 	}
+	if started := waitStarted(t, rt, singleHash); started < s.Age {
+		t.Errorf("Started = %d, before Age %d", started, s.Age)
+	}
 	for _, mutate := range []func(context.Context, ...*Torrent) error{rt.StopContext, rt.CheckContext} {
 		if err := mutate(ctx, s); err != nil {
 			t.Error(err)
@@ -228,5 +221,89 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	hashes, err := rt.HashesContext(ctx)
 	if err != nil || slices.Contains(hashes, singleHash) || slices.Contains(hashes, multiHash) {
 		t.Fatalf("after DeleteMetadata, hashes = %v, %v", hashes, err)
+	}
+}
+
+// waitLoaded waits for rTorrent to list every one of hashes; it loads
+// torrents in the background.
+func waitLoaded(t *testing.T, rt *Rtorrent, hashes ...string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		loaded, err := rt.Hashes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(hashes, func(hash string) bool { return !slices.Contains(loaded, hash) }) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the torrents did not load; loaded: %v", loaded)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// waitStarted waits for rTorrent to record that the torrent with hash has
+// started, which it does once the torrent's first hash check is done, and
+// returns when it started.
+func waitStarted(t *testing.T, rt *Rtorrent, hash string) uint64 {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		torrent, err := rt.GetTorrent(hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if torrent.Started != 0 {
+			return torrent.Started
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rTorrent did not record that %s started", hash)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestIntegrationAcrossRestart checks what an rTorrent restart keeps, in two
+// runs that CI makes around one. With RTAPI_TEST_RESTART=before, it loads
+// and starts a torrent and leaves it loaded; with after, it checks that
+// rTorrent kept when the torrent started but loaded it anew, and removes it.
+func TestIntegrationAcrossRestart(t *testing.T) {
+	address, phase := os.Getenv("RTAPI_TEST_RTORRENT"), os.Getenv("RTAPI_TEST_RESTART")
+	if address == "" || phase == "" {
+		t.Skip("set RTAPI_TEST_RTORRENT, and RTAPI_TEST_RESTART to before and then after an rTorrent restart, to run")
+	}
+	ctx := context.Background()
+	rt, err := NewRtorrentContext(ctx, address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, hash := testTorrent(map[string]any{"name": "rtapi restart probe", "length": 1000}, "http://tracker.invalid:6969/announce")
+	switch phase {
+	case "before":
+		if err := rt.DownloadRawContext(ctx, data, &DotTorrentWithOptions{Stopped: true}); err != nil {
+			t.Fatal(err)
+		}
+		waitLoaded(t, rt, hash)
+		if err := rt.StartContext(ctx, &Torrent{Hash: hash}); err != nil {
+			t.Fatal(err)
+		}
+		waitStarted(t, rt, hash)
+		// Save the torrent's session now, rather than rely on the shutdown.
+		if _, err := rt.call(ctx, "d.save_full_session", newStringValue(hash)); err != nil {
+			t.Fatal(err)
+		}
+	case "after":
+		torrent, err := rt.GetTorrentContext(ctx, hash)
+		if err != nil {
+			t.Fatalf("the torrent did not survive the restart: %v", err)
+		}
+		t.Cleanup(func() { rt.DeleteMetadata(torrent) })
+		if torrent.Started == 0 || torrent.Age <= torrent.Started {
+			t.Fatalf("after the restart, Started = %d and Age = %d; want Started kept and Age later", torrent.Started, torrent.Age)
+		}
+	default:
+		t.Fatalf("RTAPI_TEST_RESTART = %q; want before or after", phase)
 	}
 }

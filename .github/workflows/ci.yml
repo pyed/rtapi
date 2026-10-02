@@ -67,6 +67,7 @@ jobs:
           cat > "$rt/rtorrent.rc" <<RC
           directory.default.set = $rt/downloads
           session.path.set = $rt/session
+          session.use_lock.set = no
           network.scgi.open_local = $rt/rpc.socket
           network.port_range.set = 50000-50010
           dht.mode.set = disable
@@ -74,11 +75,30 @@ jobs:
           trackers.use_udp.set = no
           system.daemon.set = true
           RC
-          rtorrent -n -o import="$rt/rtorrent.rc" > "$rt/output.log" 2>&1 &
+          cat > "$rt/start.sh" <<'START'
+          rt="$RUNNER_TEMP/rtorrent"
+          rm -f "$rt/rpc.socket"
+          rtorrent -n -o import="$rt/rtorrent.rc" >> "$rt/output.log" 2>&1 &
           for _ in $(seq 100); do [ -S "$rt/rpc.socket" ] && exit 0; sleep 0.1; done
           cat "$rt/output.log"
           exit 1
+          START
+          bash "$rt/start.sh"
       - name: Test against rTorrent
         env:
           RTAPI_TEST_RTORRENT: ${{ runner.temp }}/rtorrent/rpc.socket
+          RTAPI_TEST_RESTART: before
         run: go test -count=1 -run Integration -v ./...
+      - name: Restart rTorrent
+        run: |
+          # Restart in a later second than the tests started anything.
+          sleep 2
+          pkill -TERM -x rtorrent
+          for _ in $(seq 100); do pgrep -x rtorrent > /dev/null || break; sleep 0.1; done
+          if pgrep -x rtorrent > /dev/null; then echo "rTorrent did not stop"; exit 1; fi
+          bash "$RUNNER_TEMP/rtorrent/start.sh"
+      - name: Test across the restart
+        env:
+          RTAPI_TEST_RTORRENT: ${{ runner.temp }}/rtorrent/rpc.socket
+          RTAPI_TEST_RESTART: after
+        run: go test -count=1 -run IntegrationAcrossRestart -v ./...

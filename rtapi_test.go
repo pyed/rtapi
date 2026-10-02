@@ -273,7 +273,7 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 <value><i8>0</i8></value><value><string>leech</string></value><value><i8>0</i8></value>
 <value><i8>0</i8></value><value><string>label</string></value>
 <value><string>/remote/dir</string></value><value><i8>1</i8></value>
-<value><i8>1700000000</i8></value>
+<value><i8>1700000000</i8></value><value><i8>1690000000</i8></value>
 </data></array></value>`
 	var value xmlrpcValue
 	if err := xml.Unmarshal([]byte(fragment), &value); err != nil {
@@ -291,6 +291,9 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 	}
 	if torrent.Directory != "/remote/dir" || !torrent.MultiFile || torrent.Finished != 1700000000 {
 		t.Fatalf("unexpected data location: %#v", torrent)
+	}
+	if torrent.Age != 12 || torrent.Started != 1690000000 {
+		t.Fatalf("Age = %d, Started = %d; want 12 and 1690000000", torrent.Age, torrent.Started)
 	}
 }
 
@@ -515,6 +518,7 @@ func torrentValues(name, hash string) []string {
 		stringValue(""), stringValue("/remote/" + name), intValue(0),
 		stringValue("leech"), intValue(1), intValue(0), stringValue(""),
 		stringValue("/remote/" + name), intValue(1), intValue(1700000000),
+		intValue(1690000000),
 	}
 }
 

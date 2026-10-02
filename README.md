@@ -83,7 +83,11 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   the torrents that need them. `Hashes` lists only info-hashes, the cheapest
   way to see which torrents are loaded.
 - `GetTorrent` requests only the one torrent rather than listing them all.
-- `Torrent.Finished` is when a torrent completed, in Unix seconds.
+- `Torrent.Finished` is when a torrent completed and `Torrent.Started` when it
+  first started, in Unix seconds, or 0 until then; rTorrent keeps both across
+  restarts. `Torrent.Age` is when rTorrent loaded the torrent, which it does
+  again for every torrent each time it starts, so `Started` is the better
+  guide to when a torrent was added.
 - `Files` lists a torrent's files, and `SetFilePriorities` skips or prioritizes
   them by index (`FileSkip`, `FileNormal`, `FileHigh`).
 - `GlobalLimits` and `SetGlobalLimits` read and set the global download and
@@ -107,6 +111,8 @@ v1.1.0 adds `List`, `Trackers`, and `Hashes`, and decodes responses several
 times faster with a fraction of the memory, which matters for libraries of
 thousands of torrents. If rTorrent drops `d.multicall2`, as it plans to,
 listing switches to `d.multicall`.
+
+v1.2.0 adds `Torrent.Started`.
 
 Upgrading from v0:
 

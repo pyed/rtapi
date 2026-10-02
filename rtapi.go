@@ -50,7 +50,7 @@ type Torrent struct {
 	Percent   string
 	ETA       uint64
 	Ratio     float64
-	Age       uint64
+	Age       uint64 // when rTorrent loaded the torrent, in Unix seconds; reset when rTorrent restarts, unlike Started
 	UpTotal   uint64
 	State     string
 	Message   string
@@ -63,6 +63,7 @@ type Torrent struct {
 	Directory string
 	MultiFile bool
 	Finished  uint64 // when the torrent completed, in Unix seconds; 0 until it has
+	Started   uint64 // when the torrent first started, in Unix seconds; 0 until it has
 }
 
 // Torrents is a slice of *Torrent.
@@ -263,6 +264,7 @@ var torrentFields = []string{
 	"d.directory",
 	"d.is_multi_file",
 	"d.timestamp.finished",
+	"d.timestamp.started",
 }
 
 func buildTorrentsRequest() (string, error) {
@@ -933,6 +935,9 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 	t.MultiFile = multiFile != 0
 	if t.Finished, err = fields[18].uint64Value(); err != nil {
 		return nil, fmt.Errorf("rtapi: parse torrent finished time: %w", err)
+	}
+	if t.Started, err = fields[19].uint64Value(); err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent start time: %w", err)
 	}
 
 	switch {
