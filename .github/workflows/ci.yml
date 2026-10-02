@@ -79,6 +79,7 @@ jobs:
           rt="$RUNNER_TEMP/rtorrent"
           rm -f "$rt/rpc.socket"
           rtorrent -n -o import="$rt/rtorrent.rc" >> "$rt/output.log" 2>&1 &
+          echo $! > "$rt/rtorrent.pid"
           for _ in $(seq 100); do [ -S "$rt/rpc.socket" ] && exit 0; sleep 0.1; done
           cat "$rt/output.log"
           exit 1
@@ -91,11 +92,14 @@ jobs:
         run: go test -count=1 -run Integration -v ./...
       - name: Restart rTorrent
         run: |
-          # Restart in a later second than the tests started anything.
+          # Restart in a later second than the tests started anything. libtorrent
+          # names rTorrent's main thread, which renames the process, so stop it
+          # by its PID.
           sleep 2
-          pkill -TERM -x rtorrent
-          for _ in $(seq 100); do pgrep -x rtorrent > /dev/null || break; sleep 0.1; done
-          if pgrep -x rtorrent > /dev/null; then echo "rTorrent did not stop"; exit 1; fi
+          pid=$(cat "$RUNNER_TEMP/rtorrent/rtorrent.pid")
+          kill -TERM "$pid"
+          for _ in $(seq 100); do kill -0 "$pid" 2> /dev/null || break; sleep 0.1; done
+          if kill -0 "$pid" 2> /dev/null; then echo "rTorrent did not stop"; exit 1; fi
           bash "$RUNNER_TEMP/rtorrent/start.sh"
       - name: Test across the restart
         env:
