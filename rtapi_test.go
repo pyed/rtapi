@@ -814,3 +814,36 @@ func TestEncodeUsesByteLength(t *testing.T) {
 		t.Fatalf("payload = %q", payload)
 	}
 }
+
+// Stats asks for each value by name, which a fake that answers by name checks.
+func TestStatsReadsEachValueFromItsCall(t *testing.T) {
+	answers := map[string]string{
+		"throttle.up.max":            intValue(1 << 20),
+		"throttle.down.max":          intValue(2 << 20),
+		"throttle.global_up.total":   intValue(3 << 30),
+		"throttle.global_down.total": intValue(4 << 30),
+		"network.listen.port":        intValue(51413),
+		"directory.default":          stringValue("/downloads"),
+		"system.pid":                 intValue(4242),
+	}
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		var results []string
+		for _, nested := range nestedCalls(call) {
+			answer, ok := answers[nested.method]
+			if !ok {
+				t.Errorf("asked for %s", nested.method)
+				answer = intValue(0)
+			}
+			results = append(results, result(answer))
+		}
+		return arrayResponse(results...)
+	})
+	stats, err := client.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Stats{ThrottleUp: 1 << 20, ThrottleDown: 2 << 20, TotalUp: 3 << 30, TotalDown: 4 << 30, Port: "51413", Directory: "/downloads", PID: 4242}
+	if *stats != want {
+		t.Fatalf("Stats = %+v, want %+v", *stats, want)
+	}
+}

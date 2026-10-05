@@ -340,6 +340,7 @@ func buildStatsRequest() (string, error) {
 					newMethodCall("throttle.global_down.total"),
 					newMethodCall("network.listen.port"),
 					newMethodCall("directory.default"),
+					newMethodCall("system.pid"),
 				),
 			},
 		},
@@ -1295,6 +1296,8 @@ func (r *Rtorrent) SpeedsContext(ctx context.Context) (down, up uint64, err erro
 type Stats struct {
 	ThrottleUp, ThrottleDown, TotalUp, TotalDown uint64
 	Port, Directory                              string
+	// PID is rTorrent's process ID, which changes when rTorrent restarts.
+	PID int
 }
 
 // Stats returns aggregate rTorrent information.
@@ -1310,7 +1313,7 @@ func (r *Rtorrent) StatsContext(ctx context.Context) (*Stats, error) {
 		return nil, err
 	}
 
-	resp, err := r.executeMulticall(ctx, req, 6)
+	resp, err := r.executeMulticall(ctx, req, 7)
 	if err != nil {
 		return nil, err
 	}
@@ -1320,8 +1323,8 @@ func (r *Rtorrent) StatsContext(ctx context.Context) (*Stats, error) {
 		return nil, err
 	}
 
-	if len(values) < 6 {
-		return nil, fmt.Errorf("rtapi: expected 6 stats values, got %d", len(values))
+	if len(values) < 7 {
+		return nil, fmt.Errorf("rtapi: expected 7 stats values, got %d", len(values))
 	}
 
 	throttleUpVal, err := values[0].firstArrayValue()
@@ -1373,6 +1376,16 @@ func (r *Rtorrent) StatsContext(ctx context.Context) (*Stats, error) {
 	if st.Directory, err = directoryVal.stringValue(); err != nil {
 		return nil, err
 	}
+
+	pidVal, err := values[6].firstArrayValue()
+	if err != nil {
+		return nil, err
+	}
+	pid, err := pidVal.uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse rTorrent's process ID: %w", err)
+	}
+	st.PID = int(pid)
 
 	return st, nil
 }

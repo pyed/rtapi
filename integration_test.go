@@ -197,8 +197,8 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	if err := rt.SetGlobalLimitsContext(ctx, down, up); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.StatsContext(ctx); err != nil {
-		t.Error(err)
+	if stats, err := rt.StatsContext(ctx); err != nil || stats.PID <= 0 {
+		t.Errorf("Stats = %+v, %v; want rTorrent's process ID", stats, err)
 	}
 	if _, _, err := rt.SpeedsContext(ctx); err != nil {
 		t.Error(err)

@@ -116,7 +116,8 @@ times faster with a fraction of the memory, which matters for libraries of
 thousands of torrents. If rTorrent drops `d.multicall2`, as it plans to,
 listing switches to `d.multicall`.
 
-v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers`.
+v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers` and `Stats.PID`,
+rTorrent's process ID, which tells when rTorrent has restarted.
 
 Upgrading from v0:
 
