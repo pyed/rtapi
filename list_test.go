@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,5 +227,49 @@ func TestListReadsEachTimeFromItsField(t *testing.T) {
 	}
 	if got := torrents[0]; got.Age != 12 || got.Finished != 1700000005 || got.Started != 1690000005 {
 		t.Fatalf("Age, Finished, Started = %d, %d, %d", got.Age, got.Finished, got.Started)
+	}
+}
+
+// Transfers asks for each torrent's own totals, which a fake that answers
+// fields by name checks.
+func TestTransfersReadEachTotalFromItsField(t *testing.T) {
+	hashes := []string{testHash, strings.Repeat("B", 40)}
+	fields := map[string]func(i int) string{
+		"d.hash=":       func(i int) string { return stringValue(hashes[i]) },
+		"d.up.total=":   func(i int) string { return intValue(uint64(100 + i)) },
+		"d.down.total=": func(i int) string { return intValue(uint64(1000 + i)) },
+	}
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		var rows []string
+		for i := range hashes {
+			var row strings.Builder
+			row.WriteString("<array><data>")
+			for _, param := range call.Params[2:] {
+				field, ok := fields[*param.Value.String]
+				if !ok {
+					t.Errorf("asked for %s", *param.Value.String)
+					return topLevelFault(-506, "no such method")
+				}
+				row.WriteString("<value>" + field(i) + "</value>")
+			}
+			row.WriteString("</data></array>")
+			rows = append(rows, row.String())
+		}
+		return arrayResponse(rows...)
+	})
+	transfers, err := client.Transfers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Transfer{{testHash, 100, 1000}, {strings.Repeat("B", 40), 101, 1001}}
+	if !slices.Equal(transfers, want) {
+		t.Fatalf("Transfers = %+v, want %+v", transfers, want)
+	}
+
+	short := testClient(t, func(string, xmlrpcMethodCall) string {
+		return arrayResponse("<array><data><value>" + stringValue(testHash) + "</value></data></array>")
+	})
+	if _, err := short.Transfers(); err == nil || !strings.Contains(err.Error(), "expected 3 fields") {
+		t.Fatalf("a short row gave %v", err)
 	}
 }

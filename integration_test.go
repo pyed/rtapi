@@ -142,6 +142,13 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	if s.Age == 0 || s.Started != 0 {
 		t.Errorf("loaded stopped: Age = %d, Started = %d; want Age set and Started 0", s.Age, s.Started)
 	}
+	transfers, err := rt.TransfersContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(transfers, Transfer{Hash: singleHash}) || !slices.Contains(transfers, Transfer{Hash: multiHash}) {
+		t.Errorf("Transfers = %+v, want both new torrents, with nothing transferred", transfers)
+	}
 	if err := rt.TrackersContext(ctx, Torrents{s, m}); err != nil {
 		t.Fatal(err)
 	}

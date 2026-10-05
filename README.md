@@ -81,7 +81,11 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   a call per torrent, for their trackers. For large libraries, `List` with
   `ListOptions{}` skips the trackers, and `Trackers` fills them in later for
   the torrents that need them. `Hashes` lists only info-hashes, the cheapest
-  way to see which torrents are loaded.
+  way to see which torrents are loaded, and `Transfers` lists how much of each
+  torrent's data has been uploaded and downloaded. Those counts leave out the
+  protocol messages exchanged with peers, which rTorrent's global totals
+  (`Stats`) include; a seeding library alone receives hundreds of megabytes
+  of those a day.
 - `GetTorrent` requests only the one torrent rather than listing them all.
 - `Torrent.Finished` is when a torrent completed and `Torrent.Started` when it
   first started, in Unix seconds, or 0 until then; rTorrent keeps both across
@@ -112,7 +116,7 @@ times faster with a fraction of the memory, which matters for libraries of
 thousands of torrents. If rTorrent drops `d.multicall2`, as it plans to,
 listing switches to `d.multicall`.
 
-v1.2.0 adds `Torrent.Started`.
+v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers`.
 
 Upgrading from v0:
 

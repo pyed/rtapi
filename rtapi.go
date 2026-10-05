@@ -826,6 +826,50 @@ func (r *Rtorrent) HashesContext(ctx context.Context) ([]string, error) {
 	return hashes, nil
 }
 
+// A Transfer is how much of a torrent's data rTorrent has uploaded and
+// downloaded, in bytes. It counts the torrent's own data, not the protocol
+// messages exchanged with peers, which rTorrent's global totals include.
+// rTorrent keeps both counts across restarts (from 0.9.8; 0.9.6 keeps only
+// Up), and they start over if the torrent is removed and added again.
+type Transfer struct {
+	Hash     string
+	Up, Down uint64
+}
+
+// Transfers returns every torrent's Transfer, which is much cheaper than
+// listing them.
+func (r *Rtorrent) Transfers() ([]Transfer, error) {
+	return r.TransfersContext(context.Background())
+}
+
+// TransfersContext is Transfers with a context.
+func (r *Rtorrent) TransfersContext(ctx context.Context) ([]Transfer, error) {
+	rows, err := r.downloadMulticall(ctx, []string{"d.hash", "d.up.total", "d.down.total"})
+	if err != nil {
+		return nil, err
+	}
+	transfers := make([]Transfer, len(rows))
+	for i, row := range rows {
+		fields, err := row.arrayValues()
+		if err == nil && len(fields) < 3 {
+			err = fmt.Errorf("expected 3 fields, got %d", len(fields))
+		}
+		if err == nil {
+			transfers[i].Hash, err = fields[0].stringValue()
+		}
+		if err == nil {
+			transfers[i].Up, err = fields[1].uint64Value()
+		}
+		if err == nil {
+			transfers[i].Down, err = fields[2].uint64Value()
+		}
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse torrent transfer: %w", err)
+		}
+	}
+	return transfers, nil
+}
+
 // downloadMulticall returns fields of every torrent, a row per torrent.
 // rTorrent plans to drop d.multicall2, an alias of d.multicall since 0.16, so
 // a client whose rTorrent answers that it has no d.multicall2 switches.
