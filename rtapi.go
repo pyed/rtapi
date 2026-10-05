@@ -56,7 +56,7 @@ type Torrent struct {
 	Message   string
 	Tracker   *url.URL
 	Path      string // d.base_path; empty until rTorrent opens the torrent
-	Label     string // ruTorrent label
+	Label     string // d.custom1, where ruTorrent keeps its label, percent-encoded
 	// Directory is reported even for torrents rTorrent has not opened: it is
 	// the data directory of a multi-file torrent, or the directory containing
 	// a single-file torrent's file.
@@ -1243,6 +1243,37 @@ func (r *Rtorrent) DeleteMetadata(ts ...*Torrent) error {
 // DeleteMetadataContext is DeleteMetadata with a context.
 func (r *Rtorrent) DeleteMetadataContext(ctx context.Context, ts ...*Torrent) error {
 	return r.mutate(ctx, "d.erase", ts...)
+}
+
+// SetLabel sets the label of torrents, which is d.custom1; an empty label
+// removes it. ruTorrent keeps its labels percent-encoded, as JavaScript's
+// encodeURIComponent writes them, and decodes them to show them, so labels
+// shared with ruTorrent should be set encoded.
+func (r *Rtorrent) SetLabel(label string, ts ...*Torrent) error {
+	return r.SetLabelContext(context.Background(), label, ts...)
+}
+
+// SetLabelContext is SetLabel with a context.
+func (r *Rtorrent) SetLabelContext(ctx context.Context, label string, ts ...*Torrent) error {
+	hashes, err := torrentHashes(ts)
+	if err != nil || len(hashes) == 0 {
+		return err
+	}
+	calls := make([]xmlrpcValue, len(hashes))
+	for i, hash := range hashes {
+		calls[i] = newMethodCall("d.custom1.set", hash, label)
+	}
+	req, err := marshalMethodCall(xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params:     []xmlrpcParam{{Value: newArrayValue(calls...)}},
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := r.executeMulticall(ctx, req, len(hashes)); err != nil {
+		return fmt.Errorf("rtapi: set label: %w", err)
+	}
+	return nil
 }
 
 // SpeedsWithError returns current Down/Up rates and preserves transport and RPC failures.

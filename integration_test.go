@@ -184,6 +184,15 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 		t.Fatalf("files after setting priorities = %+v, %v", files, err)
 	}
 
+	if err := rt.SetLabelContext(ctx, "rtapi%20relabeled", m); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := rt.GetTorrentContext(ctx, multiHash); err != nil {
+		t.Error(err)
+	} else if got.Label != "rtapi%20relabeled" {
+		t.Errorf("label after SetLabel = %q", got.Label)
+	}
+
 	down, up, err := rt.GlobalLimitsContext(ctx)
 	if err != nil {
 		t.Fatal(err)

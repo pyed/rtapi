@@ -847,3 +847,34 @@ func TestStatsReadsEachValueFromItsCall(t *testing.T) {
 		t.Fatalf("Stats = %+v, want %+v", *stats, want)
 	}
 }
+
+func TestSetLabelSetsEachTorrentsCustom1(t *testing.T) {
+	var requests int
+	var calls []nestedCall
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		requests++
+		calls = nestedCalls(call)
+		results := make([]string, len(calls))
+		for i := range results {
+			results[i] = result(intValue(0))
+		}
+		if len(calls) > 2 {
+			results[2] = fault(-501, "Could not find info-hash.")
+		}
+		return arrayResponse(results...)
+	})
+	other := strings.Repeat("B", 40)
+	if err := client.SetLabel("TV%20Shows", &Torrent{Hash: testHash}, &Torrent{Hash: other}); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprint([]nestedCall{{"d.custom1.set", []string{testHash, "TV%20Shows"}}, {"d.custom1.set", []string{other, "TV%20Shows"}}})
+	if got := fmt.Sprint(calls); got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
+	}
+	if err := client.SetLabel("x"); err != nil || requests != 1 {
+		t.Fatalf("labeling no torrents made %d requests: %v", requests, err)
+	}
+	if err := client.SetLabel("", &Torrent{Hash: testHash}, &Torrent{Hash: other}, &Torrent{Hash: strings.Repeat("C", 40)}); err == nil {
+		t.Fatal("a fault for one torrent was not reported")
+	}
+}

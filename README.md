@@ -92,6 +92,10 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   restarts. `Torrent.Age` is when rTorrent loaded the torrent, which it does
   again for every torrent each time it starts, so `Started` is the better
   guide to when a torrent was added.
+- `Torrent.Label` is `d.custom1`, where ruTorrent keeps its label, and
+  `SetLabel` sets it. ruTorrent stores labels percent-encoded, as
+  JavaScript's `encodeURIComponent` writes them, and decodes them to show
+  them; rtapi passes labels through as they are.
 - `Files` lists a torrent's files, and `SetFilePriorities` skips or prioritizes
   them by index (`FileSkip`, `FileNormal`, `FileHigh`).
 - `GlobalLimits` and `SetGlobalLimits` read and set the global download and
@@ -116,8 +120,9 @@ times faster with a fraction of the memory, which matters for libraries of
 thousands of torrents. If rTorrent drops `d.multicall2`, as it plans to,
 listing switches to `d.multicall`.
 
-v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers` and `Stats.PID`,
-rTorrent's process ID, which tells when rTorrent has restarted.
+v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers`, `Stats.PID`
+(rTorrent's process ID, which tells when rTorrent has restarted), and
+`SetLabel`.
 
 Upgrading from v0:
 
