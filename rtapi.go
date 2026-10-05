@@ -64,6 +64,9 @@ type Torrent struct {
 	MultiFile bool
 	Finished  uint64 // when the torrent completed, in Unix seconds; 0 until it has
 	Started   uint64 // when the torrent first started, in Unix seconds; 0 until it has
+	// Private is set for a torrent from a private tracker, which finds its
+	// peers only through its trackers.
+	Private bool
 }
 
 // Torrents is a slice of *Torrent.
@@ -265,6 +268,7 @@ var torrentFields = []string{
 	"d.is_multi_file",
 	"d.timestamp.finished",
 	"d.timestamp.started",
+	"d.is_private",
 }
 
 func buildTorrentsRequest() (string, error) {
@@ -984,6 +988,11 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 	if t.Started, err = fields[19].uint64Value(); err != nil {
 		return nil, fmt.Errorf("rtapi: parse torrent start time: %w", err)
 	}
+	private, err := fields[20].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent private flag: %w", err)
+	}
+	t.Private = private != 0
 
 	switch {
 	case isActive == 1 && len(t.Message) != 0:

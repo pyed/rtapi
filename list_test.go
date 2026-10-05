@@ -200,12 +200,13 @@ func TestReadResponseSizesBufferFromStatedLength(t *testing.T) {
 
 // Times come from the fields that keep them: when a torrent finished and
 // first started, which survive an rTorrent restart, and when it was loaded,
-// which does not.
+// which does not. Whether it is private comes from its own field too.
 func TestListReadsEachTimeFromItsField(t *testing.T) {
 	times := map[string]string{
 		"d.load_date=":          intValue(12),
 		"d.timestamp.finished=": intValue(1700000005),
 		"d.timestamp.started=":  intValue(1690000005),
+		"d.is_private=":         intValue(1),
 	}
 	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
 		values := torrentValues("timed", testHash)
@@ -225,8 +226,22 @@ func TestListReadsEachTimeFromItsField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := torrents[0]; got.Age != 12 || got.Finished != 1700000005 || got.Started != 1690000005 {
-		t.Fatalf("Age, Finished, Started = %d, %d, %d", got.Age, got.Finished, got.Started)
+	if got := torrents[0]; got.Age != 12 || got.Finished != 1700000005 || got.Started != 1690000005 || !got.Private {
+		t.Fatalf("Age, Finished, Started, Private = %d, %d, %d, %v", got.Age, got.Finished, got.Started, got.Private)
+	}
+}
+
+// A public torrent reads as one, whatever the fields around d.is_private say.
+func TestListReadsPublicTorrents(t *testing.T) {
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		return arrayResponse(torrentRow("public", testHash))
+	})
+	torrents, err := client.List(ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if torrents[0].Private || torrents[0].Started == 0 || !torrents[0].MultiFile {
+		t.Fatalf("Private, Started, MultiFile = %v, %d, %v; want false, set, and true", torrents[0].Private, torrents[0].Started, torrents[0].MultiFile)
 	}
 }
 

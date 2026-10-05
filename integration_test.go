@@ -81,7 +81,7 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 
 	singleName := `Ünïcødé & <single> "file" 日本.bin`
 	single, singleHash := testTorrent(map[string]any{"name": singleName, "length": 1000}, "http://tracker.invalid:6969/announce")
-	multi, multiHash := testTorrent(map[string]any{"name": "multi folder", "files": []any{
+	multi, multiHash := testTorrent(map[string]any{"name": "multi folder", "private": 1, "files": []any{
 		map[string]any{"length": 10, "path": []any{"a.txt"}},
 		map[string]any{"length": 20, "path": []any{"sub", "b.txt"}},
 	}}, "http://other.invalid/announce")
@@ -129,10 +129,10 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 		return nil
 	}
 	s, m := find(torrents, singleHash), find(torrents, multiHash)
-	if s.Name != singleName || s.Size != 1000 || s.MultiFile || s.Label != "rtapi test" || s.State != Stopped || s.Tracker != nil {
+	if s.Name != singleName || s.Size != 1000 || s.MultiFile || s.Label != "rtapi test" || s.State != Stopped || s.Tracker != nil || s.Private {
 		t.Errorf("single-file torrent = %+v", s)
 	}
-	if m.Name != "multi folder" || m.Size != 30 || !m.MultiFile || m.Directory != path.Join(dir, "multi folder") {
+	if m.Name != "multi folder" || m.Size != 30 || !m.MultiFile || m.Directory != path.Join(dir, "multi folder") || !m.Private {
 		t.Errorf("multi-file torrent = %+v", m)
 	}
 	if s.Directory != dir {

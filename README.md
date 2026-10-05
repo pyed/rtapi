@@ -126,7 +126,7 @@ listing switches to `d.multicall`.
 
 v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers`, `Stats.PID`
 (rTorrent's process ID, which tells when rTorrent has restarted),
-`SetLabel`, `FreeDiskSpaces`, and `Connections`.
+`Torrent.Private`, `SetLabel`, `FreeDiskSpaces`, and `Connections`.
 
 Upgrading from v0:
 
