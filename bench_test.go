@@ -32,7 +32,7 @@ func benchListResponse(n int) string {
 			intValue(1700000000 + uint64(i)), stringValue(""), stringValue(dir), intValue(1),
 			stringValue("seed"), intValue(1), intValue(0), stringValue("linux"),
 			stringValue(dir), intValue(1), intValue(1700003600 + uint64(i)),
-			intValue(1600000000 + uint64(i)),
+			intValue(1600000000 + uint64(i)), intValue(1),
 		}
 		body.WriteString("<value><array><data>\r\n")
 		for _, value := range values {
