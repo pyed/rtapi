@@ -226,6 +226,14 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	if started := waitStarted(t, rt, singleHash); started < s.Age {
 		t.Errorf("Started = %d, before Age %d", started, s.Age)
 	}
+	if free, err := rt.FreeDiskSpacesContext(ctx, singleHash, multiHash); err != nil || len(free) != 2 || free[0] == 0 || free[1] != 0 {
+		t.Errorf("free disk space of a started and an unopened torrent = %v, %v", free, err)
+	}
+	// p.multicall nested in the list works on a real rTorrent; with no
+	// peers to reach, there are no connections.
+	if count, err := rt.ConnectionsContext(ctx); err != nil || count != (Connections{}) {
+		t.Errorf("Connections = %+v, %v", count, err)
+	}
 	for _, mutate := range []func(context.Context, ...*Torrent) error{rt.StopContext, rt.CheckContext} {
 		if err := mutate(ctx, s); err != nil {
 			t.Error(err)

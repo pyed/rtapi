@@ -100,9 +100,13 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   them by index (`FileSkip`, `FileNormal`, `FileHigh`).
 - `GlobalLimits` and `SetGlobalLimits` read and set the global download and
   upload rate limits, in bytes per second; zero means unlimited.
-- `FreeDiskSpace` reports the free space on the filesystem holding a torrent.
-  rTorrent knows where that is only for torrents it has opened, such as
-  active ones, and reports 0 for the rest.
+- `FreeDiskSpace` reports the free space on the filesystem holding a torrent,
+  and `FreeDiskSpaces` that of several torrents in one request. rTorrent
+  knows where that is only for torrents it has opened, such as active ones,
+  and reports 0 for the rest.
+- `Connections` counts peer connections in one request: those peers opened
+  to rTorrent, which they can only do when its port is reachable, and those
+  rTorrent opened.
 - `Torrents.Sort` takes an explicit `rtapi.Sorting` value. Sorting is stable
   and compares names case-insensitively.
 - `DeleteMetadata` erases torrents from rTorrent and checks that rTorrent
@@ -121,8 +125,8 @@ thousands of torrents. If rTorrent drops `d.multicall2`, as it plans to,
 listing switches to `d.multicall`.
 
 v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers`, `Stats.PID`
-(rTorrent's process ID, which tells when rTorrent has restarted), and
-`SetLabel`.
+(rTorrent's process ID, which tells when rTorrent has restarted),
+`SetLabel`, `FreeDiskSpaces`, and `Connections`.
 
 Upgrading from v0:
 

@@ -1104,6 +1104,113 @@ func (r *Rtorrent) FreeDiskSpaceContext(ctx context.Context, hash string) (uint6
 	return free, nil
 }
 
+// FreeDiskSpaces is FreeDiskSpace for several torrents in one request, in the
+// order of hashes.
+func (r *Rtorrent) FreeDiskSpaces(hashes ...string) ([]uint64, error) {
+	return r.FreeDiskSpacesContext(context.Background(), hashes...)
+}
+
+// FreeDiskSpacesContext is FreeDiskSpaces with a context.
+func (r *Rtorrent) FreeDiskSpacesContext(ctx context.Context, hashes ...string) ([]uint64, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	calls := make([]xmlrpcValue, len(hashes))
+	for i, hash := range hashes {
+		if strings.TrimSpace(hash) == "" {
+			return nil, fmt.Errorf("rtapi: torrent hash %d must not be empty", i)
+		}
+		calls[i] = newMethodCall("d.free_diskspace", hash)
+	}
+	req, err := marshalMethodCall(xmlrpcMethodCall{
+		MethodName: "system.multicall",
+		Params:     []xmlrpcParam{{Value: newArrayValue(calls...)}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.executeMulticall(ctx, req, len(hashes))
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: free disk space: %w", err)
+	}
+	values, err := resp.arrayParam()
+	if err != nil {
+		return nil, err
+	}
+	free := make([]uint64, len(values))
+	for i, value := range values {
+		space, err := value.firstArrayValue()
+		if err == nil {
+			free[i], err = space.uint64Value()
+		}
+		if err != nil {
+			return nil, fmt.Errorf("rtapi: parse free disk space: %w", err)
+		}
+	}
+	return free, nil
+}
+
+// Connections counts rTorrent's peer connections: those peers opened to it
+// (Incoming), which they can only do when its port is reachable from their
+// side, and those it opened to them (Outgoing).
+type Connections struct {
+	Incoming, Outgoing int
+}
+
+// Connections counts the connections to the peers of every torrent, in one
+// request.
+func (r *Rtorrent) Connections() (Connections, error) {
+	return r.ConnectionsContext(context.Background())
+}
+
+// ConnectionsContext is Connections with a context.
+func (r *Rtorrent) ConnectionsContext(ctx context.Context) (Connections, error) {
+	// Nested in the list, p.multicall lists each torrent's peers.
+	rows, err := r.downloadMulticall(ctx, []string{"p.multicall=,p.is_incoming"})
+	if err != nil {
+		return Connections{}, err
+	}
+	var count Connections
+	for _, row := range rows {
+		incoming, outgoing, err := countPeers(row)
+		if err != nil {
+			return Connections{}, fmt.Errorf("rtapi: parse peer connections: %w", err)
+		}
+		count.Incoming += incoming
+		count.Outgoing += outgoing
+	}
+	return count, nil
+}
+
+// countPeers counts a torrent's incoming and outgoing peers from its row of
+// the list, whose one field is the nested p.multicall's result.
+func countPeers(row xmlrpcValue) (incoming, outgoing int, err error) {
+	peers, err := row.firstArrayValue()
+	if err != nil {
+		return 0, 0, err
+	}
+	list, err := peers.arrayValues()
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, peer := range list {
+		value, err := peer.firstArrayValue()
+		if err != nil {
+			return 0, 0, err
+		}
+		flag, err := value.uint64Value()
+		if err != nil {
+			return 0, 0, err
+		}
+		if flag != 0 {
+			incoming++
+		} else {
+			outgoing++
+		}
+	}
+	return incoming, outgoing, nil
+}
+
 // Download takes URL to a .torrent file to start downloading it.
 func (r *Rtorrent) Download(url string) error {
 	return r.DownloadContext(context.Background(), url)

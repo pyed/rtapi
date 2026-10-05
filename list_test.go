@@ -273,3 +273,55 @@ func TestTransfersReadEachTotalFromItsField(t *testing.T) {
 		t.Fatalf("a short row gave %v", err)
 	}
 }
+
+// Connections nests p.multicall in the torrent list, which the fake checks by
+// name, and counts each torrent's peers by p.is_incoming.
+func TestConnectionsCountIncomingAndOutgoingPeers(t *testing.T) {
+	// row is one torrent's row: its one field lists a [flag] per peer.
+	row := func(flags ...uint64) string {
+		var peers strings.Builder
+		for _, flag := range flags {
+			peers.WriteString("<value>" + result(intValue(flag)) + "</value>")
+		}
+		return "<array><data><value><array><data>" + peers.String() + "</data></array></value></data></array>"
+	}
+	rows := []string{row(1, 0, 1), row(), row(0)}
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		if fields := call.Params[2:]; len(fields) != 1 || *fields[0].Value.String != "p.multicall=,p.is_incoming=" {
+			t.Errorf("asked for %d fields, the first %q", len(fields), *fields[0].Value.String)
+		}
+		return arrayResponse(rows...)
+	})
+	if count, err := client.Connections(); err != nil || count != (Connections{Incoming: 2, Outgoing: 2}) {
+		t.Fatalf("Connections = %+v, %v", count, err)
+	}
+	rows = []string{"<array><data><value>" + intValue(1) + "</value></data></array>"}
+	if _, err := client.Connections(); err == nil {
+		t.Fatal("a row without peers was accepted")
+	}
+}
+
+func TestFreeDiskSpacesAskForEachTorrentInOneRequest(t *testing.T) {
+	requests := 0
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		requests++
+		var results []string
+		for i, nested := range nestedCalls(call) {
+			if nested.method != "d.free_diskspace" || len(nested.params) != 1 {
+				t.Errorf("call %d = %+v", i, nested)
+			}
+			results = append(results, result(intValue(uint64(i+1)<<30)))
+		}
+		return arrayResponse(results...)
+	})
+	free, err := client.FreeDiskSpaces(testHash, strings.Repeat("B", 40))
+	if err != nil || !slices.Equal(free, []uint64{1 << 30, 2 << 30}) || requests != 1 {
+		t.Fatalf("FreeDiskSpaces = %v, %v after %d requests", free, err, requests)
+	}
+	if free, err := client.FreeDiskSpaces(); err != nil || free != nil || requests != 1 {
+		t.Fatalf("no hashes gave %v, %v after %d requests", free, err, requests)
+	}
+	if _, err := client.FreeDiskSpaces(" "); err == nil {
+		t.Fatal("an empty hash was accepted")
+	}
+}
