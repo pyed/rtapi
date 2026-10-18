@@ -634,12 +634,53 @@ func TestGetTorrentRequestsOnlyThatTorrent(t *testing.T) {
 		t.Fatalf("GetTorrent made %d requests", requests.Load())
 	}
 
-	if _, err := client.GetTorrent(strings.Repeat("F", 40)); err == nil || !strings.Contains(err.Error(), "no torrent with hash") {
+	if _, err := client.GetTorrent(strings.Repeat("F", 40)); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "no torrent with hash") {
 		t.Fatalf("expected a missing-torrent error, got %v", err)
 	}
 	var rpcFault *XMLRPCFault
-	if _, err := client.GetTorrent(strings.Repeat("E", 40)); !errors.As(err, &rpcFault) || rpcFault.Code != -503 {
+	if _, err := client.GetTorrent(strings.Repeat("E", 40)); !errors.As(err, &rpcFault) || rpcFault.Code != -503 || errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected the field fault, got %v", err)
+	}
+}
+
+// ErrNotFound tells a torrent rTorrent does not have from other failures, in
+// single calls and in multicalls, and keeps the fault for errors.As.
+func TestErrNotFoundMarksOnlyMissingTorrents(t *testing.T) {
+	missing, refused := strings.Repeat("F", 40), strings.Repeat("E", 40)
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		target := ""
+		if len(call.Params) > 0 && call.Params[0].Value.String != nil {
+			target = *call.Params[0].Value.String
+		}
+		switch {
+		case call.MethodName == "system.multicall":
+			calls := nestedCalls(call)
+			if calls[0].params[0] == missing {
+				return arrayResponse(fault(-501, "Could not find info-hash."))
+			}
+			return arrayResponse(fault(-503, "permission denied"))
+		case target == missing:
+			return topLevelFault(-501, "Could not find info-hash.")
+		default:
+			return topLevelFault(-503, "permission denied")
+		}
+	})
+	for _, test := range []struct {
+		name string
+		call func(hash string) error
+	}{
+		{"Files", func(hash string) error { _, err := client.Files(hash); return err }},
+		{"FreeDiskSpace", func(hash string) error { _, err := client.FreeDiskSpace(hash); return err }},
+		{"Stop", func(hash string) error { return client.Stop(&Torrent{Hash: hash}) }},
+	} {
+		err := test.call(missing)
+		var rpcFault *XMLRPCFault
+		if !errors.Is(err, ErrNotFound) || !errors.As(err, &rpcFault) || rpcFault.Code != -501 || errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s of a missing torrent: %v", test.name, err)
+		}
+		if err := test.call(refused); err == nil || errors.Is(err, ErrNotFound) {
+			t.Errorf("%s refused: %v, want an error other than ErrNotFound", test.name, err)
+		}
 	}
 }
 

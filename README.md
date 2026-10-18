@@ -90,6 +90,9 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   (`Stats`) include; a seeding library alone receives hundreds of megabytes
   of those a day.
 - `GetTorrent` requests only the one torrent rather than listing them all.
+- Errors of calls on a torrent rTorrent does not have, such as one removed
+  since it was listed, match `ErrNotFound` with `errors.Is`; timeouts and
+  other faults do not.
 - `Torrent.Finished` is when a torrent completed and `Torrent.Started` when it
   first started, in Unix seconds, or 0 until then; rTorrent keeps both across
   restarts. `Torrent.Age` is when rTorrent loaded the torrent, which it does

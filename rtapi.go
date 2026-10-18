@@ -609,6 +609,18 @@ func scgiResponseLength(data []byte) (int64, bool) {
 	return 0, false
 }
 
+// ErrNotFound is what errors.Is finds in the errors of calls on a torrent
+// rTorrent does not have, such as one removed since it was listed. Other
+// failures, such as timeouts, do not match it.
+var ErrNotFound = errors.New("rtapi: no such torrent")
+
+// notFoundError is an error about a torrent rTorrent does not have. Its text
+// is the error's own.
+type notFoundError struct{ error }
+
+func (e notFoundError) Is(target error) bool { return target == ErrNotFound }
+func (e notFoundError) Unwrap() error        { return e.error }
+
 // XMLRPCFault is an error returned by rTorrent.
 type XMLRPCFault struct {
 	Code    int64
@@ -742,6 +754,9 @@ func (r *Rtorrent) execute(ctx context.Context, req string) (*xmlrpcMethodRespon
 	defer body.Close()
 
 	resp, err := decodeSizedResponse(body, r.MaxResponseSize, length)
+	if fault := (*XMLRPCFault)(nil); errors.As(err, &fault) && isMissingTarget(fault) {
+		return nil, notFoundError{err}
+	}
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -778,7 +793,11 @@ func (r *Rtorrent) executeMulticall(ctx context.Context, req string, expected in
 			return nil, fmt.Errorf("rtapi: decode XML-RPC multicall item %d: %w", i, err)
 		}
 		if ok {
-			return nil, fmt.Errorf("rtapi: XML-RPC multicall item %d: %w", i, fault)
+			err := fmt.Errorf("rtapi: XML-RPC multicall item %d: %w", i, fault)
+			if isMissingTarget(fault) {
+				err = notFoundError{err}
+			}
+			return nil, err
 		}
 	}
 	if len(values) != expected {
@@ -1095,7 +1114,7 @@ func (r *Rtorrent) GetTorrentContext(ctx context.Context, hash string) (*Torrent
 			return nil, fmt.Errorf("rtapi: decode %s fault: %w", field, err)
 		} else if ok {
 			if isMissingTarget(fault) {
-				return nil, fmt.Errorf("rtapi: no torrent with hash %q", hash)
+				return nil, notFoundError{fmt.Errorf("rtapi: no torrent with hash %q", hash)}
 			}
 			return nil, fmt.Errorf("rtapi: get %s: %w", field, fault)
 		}
