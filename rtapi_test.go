@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -805,10 +806,13 @@ func TestHTTPTransportPostsXMLRPCWithBasicAuth(t *testing.T) {
 // HTTPClient carries requests to https addresses, as for a certificate
 // authority of one's own, which http.DefaultClient does not trust.
 func TestHTTPClientSendsHTTPRequests(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scgi := versionResponse()
 		io.WriteString(w, scgi[strings.Index(scgi, "<?xml"):])
 	}))
+	// The refused handshake is expected; keep it out of the test output.
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+	server.StartTLS()
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL + "/RPC2")
 	if err != nil {
