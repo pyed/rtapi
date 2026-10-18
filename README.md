@@ -146,6 +146,12 @@ v1.2.0 adds `Torrent.Started`, and v1.3.0 adds `Transfers`, `Stats.PID`
 (rTorrent's process ID, which tells when rTorrent has restarted),
 `Torrent.Private`, `SetLabel`, `FreeDiskSpaces`, and `Connections`.
 
+v1.4.0 refuses a load's `Dir` or `Label` that rTorrent would run as a command
+(`ErrCommandArgument`), and adds `ErrNotFound`, `NewClient` and `GetVersion`,
+`Rtorrent.HTTPClient`, `Torrent.Added` with `ByAdded` sorting, and
+`Torrent.TrackerCount`. Socket paths count as sockets before the socket
+exists.
+
 Upgrading from v0:
 
 - `Speeds` is gone; use `SpeedsWithError` or `SpeedsContext`, which report
