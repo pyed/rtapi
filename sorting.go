@@ -25,6 +25,10 @@ const (
 	ByAgeRev
 	ByUpTotal
 	ByUpTotalRev
+	// ByAdded orders torrents by when they were added (Torrent.Added), which,
+	// unlike Age, survives rTorrent restarts.
+	ByAdded
+	ByAddedRev
 )
 
 // Sort orders torrents in place. Names compare case-insensitively, and the
@@ -45,6 +49,8 @@ func (t Torrents) Sort(aSorting Sorting) {
 		compare = func(a, b *Torrent) int { return cmp.Compare(a.Ratio, b.Ratio) }
 	case ByAge, ByAgeRev:
 		compare = func(a, b *Torrent) int { return cmp.Compare(a.Age, b.Age) }
+	case ByAdded, ByAddedRev:
+		compare = func(a, b *Torrent) int { return cmp.Compare(a.Added(), b.Added()) }
 	case ByUpTotal, ByUpTotalRev:
 		compare = func(a, b *Torrent) int { return cmp.Compare(a.UpTotal, b.UpTotal) }
 	default:
@@ -52,7 +58,7 @@ func (t Torrents) Sort(aSorting Sorting) {
 	}
 
 	switch aSorting {
-	case ByNameRev, ByDownRateRev, ByUpRateRev, BySizeRev, ByRatioRev, ByAgeRev, ByUpTotalRev:
+	case ByNameRev, ByDownRateRev, ByUpRateRev, BySizeRev, ByRatioRev, ByAgeRev, ByUpTotalRev, ByAddedRev:
 		ascending := compare
 		compare = func(a, b *Torrent) int { return ascending(b, a) }
 	}

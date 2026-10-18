@@ -114,6 +114,27 @@ func TestReverseSorting(t *testing.T) {
 	}
 }
 
+// ByAdded goes by when torrents first started, which a restart of rTorrent
+// keeps, and by when rTorrent loaded those that never started.
+func TestSortByAdded(t *testing.T) {
+	torrents := Torrents{
+		{Name: "restarted", Started: 100, Age: 900},
+		{Name: "never started", Age: 300},
+		{Name: "newest", Started: 500, Age: 901},
+	}
+	if got := torrents[1].Added(); got != 300 {
+		t.Fatalf("Added of a torrent that never started = %d, want its Age", got)
+	}
+	torrents.Sort(ByAdded)
+	if torrents[0].Name != "restarted" || torrents[1].Name != "never started" || torrents[2].Name != "newest" {
+		t.Fatalf("ByAdded = %s, %s, %s", torrents[0].Name, torrents[1].Name, torrents[2].Name)
+	}
+	torrents.Sort(ByAddedRev)
+	if torrents[0].Name != "newest" || torrents[2].Name != "restarted" {
+		t.Fatalf("ByAddedRev = %s, %s, %s", torrents[0].Name, torrents[1].Name, torrents[2].Name)
+	}
+}
+
 func TestSortIgnoresNameCaseAndIsStable(t *testing.T) {
 	names := func(torrents Torrents) string {
 		var result []string

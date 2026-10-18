@@ -105,7 +105,9 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   first started, in Unix seconds, or 0 until then; rTorrent keeps both across
   restarts. `Torrent.Age` is when rTorrent loaded the torrent, which it does
   again for every torrent each time it starts, so `Started` is the better
-  guide to when a torrent was added.
+  guide to when a torrent was added. `Torrent.Added` is `Started`, or `Age`
+  for a torrent that never started, and `ByAdded` sorts by it; `ByAge`
+  orders torrents by the time they were loaded.
 - `Torrent.Label` is `d.custom1`, where ruTorrent keeps its label, and
   `SetLabel` sets it. ruTorrent stores labels percent-encoded, as
   JavaScript's `encodeURIComponent` writes them, and decodes them to show

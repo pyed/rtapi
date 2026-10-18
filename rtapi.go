@@ -71,6 +71,16 @@ type Torrent struct {
 	Private bool
 }
 
+// Added is when the torrent was added, as near as rTorrent says, in Unix
+// seconds: when it first started, which rTorrent keeps across restarts, or,
+// for a torrent that has never started, when rTorrent loaded it (Age).
+func (t *Torrent) Added() uint64 {
+	if t.Started != 0 {
+		return t.Started
+	}
+	return t.Age
+}
+
 // Torrents is a slice of *Torrent.
 type Torrents []*Torrent
 
