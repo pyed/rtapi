@@ -85,10 +85,15 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 		map[string]any{"length": 10, "path": []any{"a.txt"}},
 		map[string]any{"length": 20, "path": []any{"sub", "b.txt"}},
 	}}, "http://other.invalid/announce")
-	for _, data := range [][]byte{single, multi} {
-		if err := rt.DownloadRawContext(ctx, data, &DotTorrentWithOptions{Stopped: true, Dir: dir, Label: "rtapi test"}); err != nil {
-			t.Fatal(err)
-		}
+	if err := rt.DownloadRawContext(ctx, single, &DotTorrentWithOptions{Stopped: true, Dir: dir, Label: "rtapi test"}); err != nil {
+		t.Fatal(err)
+	}
+	// rTorrent parses a load's directory and label as command arguments, so
+	// quotes, backslashes, dollar signs, and characters strconv.Quote would
+	// escape must arrive as they are.
+	oddDir, oddLabel := path.Join(dir, `quote" back\slash $1 zero`+"​width é"), `rtapi "label" \ $2`
+	if err := rt.DownloadRawContext(ctx, multi, &DotTorrentWithOptions{Stopped: true, Dir: oddDir, Label: oddLabel}); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		rt.DeleteMetadata(&Torrent{Hash: singleHash}, &Torrent{Hash: multiHash})
@@ -132,7 +137,7 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 	if s.Name != singleName || s.Size != 1000 || s.MultiFile || s.Label != "rtapi test" || s.State != Stopped || s.Tracker != nil || s.Private {
 		t.Errorf("single-file torrent = %+v", s)
 	}
-	if m.Name != "multi folder" || m.Size != 30 || !m.MultiFile || m.Directory != path.Join(dir, "multi folder") || !m.Private {
+	if m.Name != "multi folder" || m.Size != 30 || !m.MultiFile || m.Directory != path.Join(oddDir, "multi folder") || !m.Private || m.Label != oddLabel {
 		t.Errorf("multi-file torrent = %+v", m)
 	}
 	if s.Directory != dir {

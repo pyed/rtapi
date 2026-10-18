@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -289,13 +291,51 @@ func buildDownloadMulticall(method string, fields []string) (string, error) {
 // that set the new torrent's directory and label when they are given.
 func buildLoadRequest(method string, source xmlrpcParam, dir, label string) (string, error) {
 	params := []xmlrpcParam{newStringParam(""), source}
-	if dir != "" {
-		params = append(params, newStringParam("d.directory.set="+strconv.Quote(dir)))
-	}
-	if label != "" {
-		params = append(params, newStringParam("d.custom1.set="+strconv.Quote(label)))
+	for _, command := range []struct{ name, setter, value string }{
+		{"directory", "d.directory.set=", dir},
+		{"label", "d.custom1.set=", label},
+	} {
+		if command.value == "" {
+			continue
+		}
+		argument, err := commandArgument(command.value)
+		if err != nil {
+			return "", fmt.Errorf("rtapi: %s %q: %w", command.name, command.value, err)
+		}
+		params = append(params, newStringParam(command.setter+argument))
 	}
 	return marshalMethodCall(xmlrpcMethodCall{MethodName: method, Params: params})
+}
+
+// ErrCommandArgument is the error for a load's directory or label that rTorrent
+// cannot be given safely.
+var ErrCommandArgument = errors.New("rTorrent cannot be given this value safely")
+
+// commandArgument quotes value as one argument of an rTorrent command, such as
+// the d.directory.set= a load runs on its torrent. rTorrent's parser makes the
+// character after a backslash literal, and nothing else: \n is an n. It runs
+// an argument that starts with $ as a command, quoted or not, and XML cannot
+// carry control characters or invalid UTF-8, so those values are refused.
+func commandArgument(value string) (string, error) {
+	switch {
+	case strings.HasPrefix(value, "$"):
+		return "", fmt.Errorf("%w: rTorrent runs a value that starts with $ as a command", ErrCommandArgument)
+	case !utf8.ValidString(value):
+		return "", fmt.Errorf("%w: it is not valid UTF-8", ErrCommandArgument)
+	case strings.ContainsFunc(value, unicode.IsControl):
+		return "", fmt.Errorf("%w: it contains control characters", ErrCommandArgument)
+	}
+	var quoted strings.Builder
+	quoted.Grow(len(value) + 2)
+	quoted.WriteByte('"')
+	for _, r := range value {
+		if r == '"' || r == '\\' {
+			quoted.WriteByte('\\')
+		}
+		quoted.WriteRune(r)
+	}
+	quoted.WriteByte('"')
+	return quoted.String(), nil
 }
 
 func buildSystemMulticallRequest(method string, params ...string) (string, error) {

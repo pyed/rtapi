@@ -218,11 +218,50 @@ func TestBuildRequestsUseExactCountersAndEscapedOptions(t *testing.T) {
 	if err := xml.Unmarshal([]byte(req), &call); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := *call.Params[2].Value.String, "d.directory.set="+strconv.Quote(`/tmp/a";bad`); got != want {
+	if got, want := *call.Params[2].Value.String, `d.directory.set="/tmp/a\";bad"`; got != want {
 		t.Fatalf("directory command = %q, want %q", got, want)
 	}
-	if got, want := *call.Params[3].Value.String, "d.custom1.set="+strconv.Quote(`x";bad`); got != want {
+	if got, want := *call.Params[3].Value.String, `d.custom1.set="x\";bad"`; got != want {
 		t.Fatalf("label command = %q, want %q", got, want)
+	}
+}
+
+// rTorrent unescapes only by making the character after a backslash literal,
+// and runs an argument that starts with $ as a command, even quoted.
+func TestCommandArgumentQuotesForRTorrentAndRefusesCommands(t *testing.T) {
+	for _, test := range []struct{ value, want string }{
+		{`/srv/a "b" \c`, `"/srv/a \"b\" \\c"`},
+		{"日本 é​", "\"日本 é​\""}, // strconv.Quote writes ​, which rTorrent reads as u200b
+		{"a$b", `"a$b"`},
+		{" $x", `" $x"`},
+	} {
+		if got, err := commandArgument(test.value); err != nil || got != test.want {
+			t.Errorf("commandArgument(%q) = %q, %v; want %q", test.value, got, err, test.want)
+		}
+	}
+	for _, value := range []string{"$execute=sh,-c,id", "$", "a\nb", "tab\there", "\xff", "del\x7f"} {
+		if got, err := commandArgument(value); !errors.Is(err, ErrCommandArgument) {
+			t.Errorf("commandArgument(%q) = %q, %v; want ErrCommandArgument", value, got, err)
+		}
+	}
+}
+
+func TestLoadsRefuseValuesRTorrentWouldRun(t *testing.T) {
+	data := []byte("d4:infod4:name4:testee")
+	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
+		t.Errorf("sent %s", call.MethodName)
+		return response(intValue(0))
+	})
+	for name, load := range map[string]func() error{
+		"raw directory": func() error { return client.DownloadRaw(data, &DotTorrentWithOptions{Dir: "$execute=rm,-rf,/"}) },
+		"raw label":     func() error { return client.DownloadRaw(data, &DotTorrentWithOptions{Label: "$cat=x"}) },
+		"link label": func() error {
+			return client.DownloadWithOptions(&DotTorrentWithOptions{Link: "https://example.invalid/a.torrent", Label: "$x"})
+		},
+	} {
+		if err := load(); !errors.Is(err, ErrCommandArgument) {
+			t.Errorf("%s: err = %v, want ErrCommandArgument", name, err)
+		}
 	}
 }
 

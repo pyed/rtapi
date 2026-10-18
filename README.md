@@ -75,8 +75,11 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
 - `DownloadRaw` loads torrent bytes directly, avoiding credential-bearing
   intermediary URLs. `DownloadWithOptions` remains available for URL loading.
   Set `DotTorrentWithOptions.Stopped` to load a torrent without starting it. An
-  empty `Dir` or `Label` leaves rTorrent's default. URL loads use rTorrent's
-  verbose load commands, so rTorrent logs why a link failed to load.
+  empty `Dir` or `Label` leaves rTorrent's default. rTorrent parses them as
+  command arguments and runs one that starts with `$` as a command, so loads
+  refuse such values, and those with control characters or invalid UTF-8,
+  with `ErrCommandArgument`. URL loads use rTorrent's verbose load commands,
+  so rTorrent logs why a link failed to load.
 - `Torrents` makes two requests: one for every torrent's details and one, with
   a call per torrent, for their trackers. For large libraries, `List` with
   `ListOptions{}` skips the trackers, and `Trackers` fills them in later for
