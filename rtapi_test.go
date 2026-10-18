@@ -314,7 +314,7 @@ func TestParseTorrentUsesExactCountersAndCeilingETA(t *testing.T) {
 <value><i8>0</i8></value><value><string>label</string></value>
 <value><string>/remote/dir</string></value><value><i8>1</i8></value>
 <value><i8>1700000000</i8></value><value><i8>1690000000</i8></value>
-<value><i8>1</i8></value>
+<value><i8>1</i8></value><value><i8>2</i8></value>
 </data></array></value>`
 	var value xmlrpcValue
 	if err := xml.Unmarshal([]byte(fragment), &value); err != nil {
@@ -559,7 +559,7 @@ func torrentValues(name, hash string) []string {
 		stringValue(""), stringValue("/remote/" + name), intValue(0),
 		stringValue("leech"), intValue(1), intValue(0), stringValue(""),
 		stringValue("/remote/" + name), intValue(1), intValue(1700000000),
-		intValue(1690000000), intValue(0),
+		intValue(1690000000), intValue(0), intValue(1),
 	}
 }
 

@@ -108,6 +108,8 @@ and XML-RPC faults are returned to the caller; `errors.As` can inspect an
   guide to when a torrent was added. `Torrent.Added` is `Started`, or `Age`
   for a torrent that never started, and `ByAdded` sorts by it; `ByAge`
   orders torrents by the time they were loaded.
+- `Torrent.TrackerCount` is how many trackers a torrent lists. `Message` is
+  what the last tracker to answer said, which need not be the first.
 - `Torrent.Label` is `d.custom1`, where ruTorrent keeps its label, and
   `SetLabel` sets it. ruTorrent stores labels percent-encoded, as
   JavaScript's `encodeURIComponent` writes them, and decodes them to show

@@ -69,6 +69,9 @@ type Torrent struct {
 	// Private is set for a torrent from a private tracker, which finds its
 	// peers only through its trackers.
 	Private bool
+	// TrackerCount is how many trackers the torrent lists. Message holds what
+	// the last of them to answer said, which need not be the first.
+	TrackerCount int
 }
 
 // Added is when the torrent was added, as near as rTorrent says, in Unix
@@ -311,6 +314,7 @@ var torrentFields = []string{
 	"d.timestamp.finished",
 	"d.timestamp.started",
 	"d.is_private",
+	"d.tracker_size",
 }
 
 func buildTorrentsRequest() (string, error) {
@@ -1092,6 +1096,11 @@ func parseTorrent(value xmlrpcValue) (*Torrent, error) {
 		return nil, fmt.Errorf("rtapi: parse torrent private flag: %w", err)
 	}
 	t.Private = private != 0
+	trackers, err := fields[21].uint64Value()
+	if err != nil {
+		return nil, fmt.Errorf("rtapi: parse torrent tracker count: %w", err)
+	}
+	t.TrackerCount = int(min(trackers, math.MaxInt32))
 
 	switch {
 	case isActive == 1 && len(t.Message) != 0:

@@ -200,13 +200,15 @@ func TestReadResponseSizesBufferFromStatedLength(t *testing.T) {
 
 // Times come from the fields that keep them: when a torrent finished and
 // first started, which survive an rTorrent restart, and when it was loaded,
-// which does not. Whether it is private comes from its own field too.
+// which does not. Whether it is private, and its tracker count, come from
+// their own fields too.
 func TestListReadsEachTimeFromItsField(t *testing.T) {
 	times := map[string]string{
 		"d.load_date=":          intValue(12),
 		"d.timestamp.finished=": intValue(1700000005),
 		"d.timestamp.started=":  intValue(1690000005),
 		"d.is_private=":         intValue(1),
+		"d.tracker_size=":       intValue(3),
 	}
 	client := testClient(t, func(_ string, call xmlrpcMethodCall) string {
 		values := torrentValues("timed", testHash)
@@ -226,8 +228,8 @@ func TestListReadsEachTimeFromItsField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := torrents[0]; got.Age != 12 || got.Finished != 1700000005 || got.Started != 1690000005 || !got.Private {
-		t.Fatalf("Age, Finished, Started, Private = %d, %d, %d, %v", got.Age, got.Finished, got.Started, got.Private)
+	if got := torrents[0]; got.Age != 12 || got.Finished != 1700000005 || got.Started != 1690000005 || !got.Private || got.TrackerCount != 3 {
+		t.Fatalf("Age, Finished, Started, Private, TrackerCount = %d, %d, %d, %v, %d", got.Age, got.Finished, got.Started, got.Private, got.TrackerCount)
 	}
 }
 

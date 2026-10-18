@@ -134,10 +134,10 @@ func TestIntegrationAgainstRTorrent(t *testing.T) {
 		return nil
 	}
 	s, m := find(torrents, singleHash), find(torrents, multiHash)
-	if s.Name != singleName || s.Size != 1000 || s.MultiFile || s.Label != "rtapi test" || s.State != Stopped || s.Tracker != nil || s.Private {
+	if s.Name != singleName || s.Size != 1000 || s.MultiFile || s.Label != "rtapi test" || s.State != Stopped || s.Tracker != nil || s.Private || s.TrackerCount != 1 {
 		t.Errorf("single-file torrent = %+v", s)
 	}
-	if m.Name != "multi folder" || m.Size != 30 || !m.MultiFile || m.Directory != path.Join(oddDir, "multi folder") || !m.Private || m.Label != oddLabel {
+	if m.Name != "multi folder" || m.Size != 30 || !m.MultiFile || m.Directory != path.Join(oddDir, "multi folder") || !m.Private || m.Label != oddLabel || m.TrackerCount != 1 {
 		t.Errorf("multi-file torrent = %+v", m)
 	}
 	if s.Directory != dir {
