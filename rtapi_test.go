@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -810,6 +811,49 @@ func TestAddressSelectsTransport(t *testing.T) {
 	}
 	if _, err := NewRtorrent("https:///RPC2"); err == nil || !strings.Contains(err.Error(), "no host") {
 		t.Fatalf("expected a missing-host error, got %v", err)
+	}
+	// A socket that does not exist yet, as before rTorrent starts, is still
+	// a socket.
+	for address, network := range map[string]string{
+		"localhost:5000": "tcp", "[::1]:5000": "tcp", "rtorrent.invalid:scgi": "tcp",
+		"/run/rtorrent/rpc.socket": "unix", "rpc.socket": "unix", "/srv/rt:5000/rpc": "unix", `C:\rtorrent\rpc.socket`: "unix",
+	} {
+		client, err := NewClient(address)
+		if err != nil || client.network != network || client.address != address || client.Version != "" {
+			t.Errorf("NewClient(%q) = %+v, %v; want network %s", address, client, err, network)
+		}
+	}
+}
+
+// NewClient asks rTorrent nothing, so it works while rTorrent is down, and
+// the client reaches rTorrent once it is up.
+func TestNewClientWorksBeforeRTorrentAnswers(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "rpc.socket")
+	client, err := NewClient(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Timeout = time.Second
+	if _, err := client.GetVersion(); err == nil {
+		t.Fatal("GetVersion succeeded with nothing listening")
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Skipf("Unix sockets: %v", err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, err := readSCGIRequest(conn); err == nil {
+			io.WriteString(conn, versionResponse())
+		}
+	}()
+	if version, err := client.GetVersion(); err != nil || version != "0.9.8/0.13.8" {
+		t.Fatalf("GetVersion = %q, %v", version, err)
 	}
 }
 

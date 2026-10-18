@@ -213,6 +213,21 @@ func NewRtorrent(address string) (*Rtorrent, error) {
 
 // NewRtorrentContext is NewRtorrent with a context for the version request.
 func NewRtorrentContext(ctx context.Context, address string) (*Rtorrent, error) {
+	rt, err := NewClient(address)
+	if err != nil {
+		return nil, err
+	}
+	if rt.Version, err = rt.getVersion(ctx); err != nil {
+		return nil, err
+	}
+	return rt, nil
+}
+
+// NewClient is NewRtorrent without the version request: it asks rTorrent
+// nothing, so it succeeds while rTorrent is down, and Version stays empty
+// (GetVersion asks for it). An address that is neither a URL nor host:port is
+// a socket path, whether or not the socket exists yet.
+func NewClient(address string) (*Rtorrent, error) {
 	if strings.TrimSpace(address) == "" {
 		return nil, fmt.Errorf("rtapi: address must not be empty")
 	}
@@ -235,17 +250,28 @@ func NewRtorrentContext(ctx context.Context, address string) (*Rtorrent, error) 
 		}
 		rt.endpoint = endpoint
 		rt.network, rt.address = "http", endpoint.String()
-	} else if _, err := os.Stat(address); err == nil {
+	} else if _, err := os.Stat(address); err == nil || !isHostPort(address) {
 		rt.network = "unix"
 	}
-
-	ver, err := rt.getVersion(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	rt.Version = ver
 	return rt, nil
+}
+
+// isHostPort reports whether address is a host and port, such as
+// localhost:5000, rather than a path.
+func isHostPort(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	return err == nil && port != "" && !strings.ContainsAny(host+port, `/\`)
+}
+
+// GetVersion asks rTorrent for its version and libtorrent's, in the form of
+// Version, such as 0.9.8/0.13.8.
+func (r *Rtorrent) GetVersion() (string, error) {
+	return r.GetVersionContext(context.Background())
+}
+
+// GetVersionContext is GetVersion with a context.
+func (r *Rtorrent) GetVersionContext(ctx context.Context) (string, error) {
+	return r.getVersion(ctx)
 }
 
 // torrentFields are the d.* getters parseTorrent reads, in order.

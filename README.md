@@ -55,6 +55,11 @@ TCP addresses such as `127.0.0.1:5000` are also accepted, as are `http://` and
 with HTTP basic authentication and kept out of error messages; requests use
 `http.DefaultClient`, which honors `HTTPS_PROXY`.
 
+`NewRtorrent` asks rTorrent for its version, so it fails while rTorrent is
+down. `NewClient` asks nothing, for programs that may start before rTorrent;
+`GetVersion` asks for the version later. An address that is neither a URL nor
+`host:port` is a socket path, whether or not the socket exists yet.
+
 Every method has a `...Context` variant, such as `TorrentsContext`, and
 `NewRtorrentContext`. Cancelling the context interrupts the request.
 Cancellations and timeouts match `context.Canceled` and
