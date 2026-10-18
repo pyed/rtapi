@@ -53,7 +53,10 @@ TCP addresses such as `127.0.0.1:5000` are also accepted, as are `http://` and
 `https://` XML-RPC URLs for rTorrent behind a web server, such as
 `https://user:password@seedbox.example/RPC2`. Credentials in the URL are sent
 with HTTP basic authentication and kept out of error messages; requests use
-`http.DefaultClient`, which honors `HTTPS_PROXY`.
+`Rtorrent.HTTPClient` when it is set, as for a proxy or a certificate
+authority of one's own, and `http.DefaultClient`, which honors `HTTPS_PROXY`,
+otherwise. Basic authentication over plain `http://` sends the password
+readably; use `https://` beyond the local machine.
 
 `NewRtorrent` asks rTorrent for its version, so it fails while rTorrent is
 down. `NewClient` asks nothing, for programs that may start before rTorrent;

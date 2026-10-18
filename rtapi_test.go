@@ -802,6 +802,27 @@ func TestHTTPTransportPostsXMLRPCWithBasicAuth(t *testing.T) {
 	}
 }
 
+// HTTPClient carries requests to https addresses, as for a certificate
+// authority of one's own, which http.DefaultClient does not trust.
+func TestHTTPClientSendsHTTPRequests(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scgi := versionResponse()
+		io.WriteString(w, scgi[strings.Index(scgi, "<?xml"):])
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL + "/RPC2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetVersion(); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("http.DefaultClient trusted the test certificate: %v", err)
+	}
+	client.HTTPClient = server.Client()
+	if version, err := client.GetVersion(); err != nil || version != "0.9.8/0.13.8" {
+		t.Fatalf("GetVersion = %q, %v", version, err)
+	}
+}
+
 func TestAddressSelectsTransport(t *testing.T) {
 	for _, address := range []string{"localhost:5000", "127.0.0.1:5000", "rtorrent.invalid:5000"} {
 		_, err := NewRtorrentContext(canceledContext(), address)

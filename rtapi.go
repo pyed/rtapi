@@ -198,6 +198,10 @@ type Rtorrent struct {
 	Timeout time.Duration
 	// MaxResponseSize bounds response bytes. Non-positive values use DefaultMaxResponseSize.
 	MaxResponseSize int64
+	// HTTPClient sends requests to http and https addresses, for a proxy or a
+	// certificate authority of one's own; nil uses http.DefaultClient. Timeout
+	// still bounds each request.
+	HTTPClient *http.Client
 	// renamedMulticall is set, atomically, once rTorrent has answered that it
 	// has no d.multicall2.
 	renamedMulticall int32
@@ -1798,8 +1802,8 @@ func (r *Rtorrent) send(ctx context.Context, data []byte) (io.ReadCloser, error)
 }
 
 // post sends an XML-RPC request over HTTP and returns the response body and
-// its length, or -1 when unknown. It uses http.DefaultClient, which honors
-// HTTPS_PROXY and, on Unix, SSL_CERT_FILE.
+// its length, or -1 when unknown. It uses HTTPClient, or http.DefaultClient,
+// which honors HTTPS_PROXY and, on Unix, SSL_CERT_FILE.
 func (r *Rtorrent) post(ctx context.Context, req string) (io.ReadCloser, int64, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, strings.NewReader(req))
 	if err != nil {
@@ -1809,7 +1813,11 @@ func (r *Rtorrent) post(ctx context.Context, req string) (io.ReadCloser, int64, 
 	if r.username != "" || r.password != "" {
 		request.SetBasicAuth(r.username, r.password)
 	}
-	response, err := http.DefaultClient.Do(request)
+	client := r.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, 0, err
 	}
